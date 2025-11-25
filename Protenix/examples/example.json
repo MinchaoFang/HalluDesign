@@ -1,0 +1,104 @@
+[{
+    "sequences": [
+        {
+            "proteinChain": {
+                "sequence": "MGSSHHHHHHSSGLVPRGSHMSGKIQHKAVVPAPSRIPLTLSEIEDLRRKGFNQTEIAELYGVTRQAVSWHKKTYGGRLTTRQIVQQNWPWDTRKPHDKSKAFQRLRDHGEYMRVGSFRTMSEDKKKRLLSWWKMLRDNDLVLEFDPSIEPYEGMAGGGFRYVPRDISDDDLLIRVNEHTQLTAEGELLWSWPDDIEELLSEP",
+                "count": 1,
+                "msa": {
+                    "precomputed_msa_dir": "./examples/7r6r/msa/1",
+                    "pairing_db": "uniref100"
+                }
+            }
+        },
+        {
+            "dnaSequence": {
+                "sequence": "TTTCGGTGGCTGTCAAGCGGG",
+                "count": 1
+            }
+        },
+        {
+            "dnaSequence": {
+                "sequence": "CCCGCTTGACAGCCACCGAAA",
+                "count": 1
+            }
+        }
+    ],
+    "name": "7r6r"
+},
+{
+    "sequences": [
+        {
+            "proteinChain": {
+                "sequence": "MASWSHPQFEKGGTHVAETSAPTRSEPDTRVLTLPGTASAPEFRLIDIDGLLNNRATTDVRDLGSGRLNAWGNSFPAAELPAPGSLITVAGIPFTWANAHARGDNIRCEGQVVDIPPGQYDWIYLLAASERRSEDTIWAHYDDGHADPLRVGISDFLDGTPAFGELSAFRTSRMHYPHHVQEGLPTTMWLTRVGMPRHGVARSLRLPRSVAMHVFALTLRTAAAVRLAEGATT",
+                "count": 2,
+                "msa": {
+                    "precomputed_msa_dir": "./examples/7wux/msa/1",
+                    "pairing_db": "uniref100"
+                }
+            }
+        },
+        {
+            "proteinChain": {
+                "sequence": "MGSSHHHHHHSQDPNSTTTAPPVELWTRDLGSCLHGTLATALIRDGHDPVTVLGAPWEFRRRPGAWSSEEYFFFAEPDSLAGRLALYHPFESTWHRSDGDGVDDLREALAAGVLPIAAVDNFHLPFRPAFHDVHAAHLLVVYRITETEVYVSDAQPPAFQGAIPLADFLASWGSLNPPDDADVFFSASPSGRRWLRTRMTGPVPEPDRHWVGRVIRENVARYRQEPPADTQTGLPGLRRYLDELCALTPGTNAASEALSELYVISWNIQAQSGLHAEFLRAHSVKWRIPELAEAAAGVDAVAHGWTGVRMTGAHSRVWQRHRPAELRGHATALVRRLEAALDLLELAADAVS",
+                "count": 2,
+                "msa": {
+                    "precomputed_msa_dir": "./examples/7wux/msa/2",
+                    "pairing_db": "uniref100"
+                }
+            }
+        },
+        {
+            "ligand": {
+                "ligand": "CCD_P4G",
+                "count": 1
+            }
+        },
+        {
+            "ligand": {
+                "ligand": "CCD_6OI",
+                "count": 2
+            }
+        },
+        {
+            "ligand": {
+                "ligand": "CCD_MG",
+                "count": 3
+            }
+        }
+    ],
+    "name": "7wux"
+},
+{
+    "sequences": [
+        {
+            "proteinChain": {
+                "sequence": "MAEVIRSSAFWRSFPIFEEFDSETLCELSGIASYRKWSAGTVIFQRGDQGDYMIVVVSGRIKLSLFTPQGRELMLRQHEAGALFGEMALLDGQPRSADATAVTAAEGYVIGKKDFLALITQRPKTAEAVIRFLCAQLRDTTDRLETIALYDLNARVARFFLATLRQIHGSEMPQSANLRLTLSQTDIASILGASRPKVNRAILSLEESGAIKRADGIICCNVGRLLSIADPEEDLEHHHHHHHH",
+                "count": 2,
+                "msa": {
+                    "precomputed_msa_dir": "./examples/7pzb/msa/1",
+                    "pairing_db": "uniref100"
+                }
+            }
+        },
+        {
+            "dnaSequence": {
+                "sequence": "CTAGGTAACATTACTCGCG",
+                "count": 2
+            }
+        },
+        {
+            "dnaSequence": {
+                "sequence": "GCGAGTAATGTTAC",
+                "count": 2
+            }
+        },
+        {
+            "ligand": {
+                "ligand": "CCD_PCG",
+                "count": 2
+            }
+        }
+    ],
+    "name": "7pzb"
+}
+]

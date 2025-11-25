@@ -1,0 +1,477 @@
+# Copyright 2024 ByteDance and/or its affiliates.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import logging
+import os
+import traceback
+import urllib.request
+from contextlib import nullcontext
+from os.path import exists as opexists
+from os.path import join as opjoin
+from typing import Any, Mapping
+
+import torch
+import torch.distributed as dist
+#import sys
+#sys.path.insert(0,"/storage/caolongxingLab/fangminchao/software/Protenix")
+from configs.configs_base import configs as configs_base
+from configs.configs_data import data_configs
+from configs.configs_inference import inference_configs
+from protenix.config import parse_configs, parse_sys_args
+from protenix.data.infer_data_pipeline import get_inference_dataloader
+from protenix.model.protenix import Protenix
+from protenix.utils.distributed import DIST_WRAPPER
+from protenix.utils.seed import seed_everything
+from protenix.utils.torch_utils import to_device
+from protenix.web_service.dependency_url import URL
+from runner.dumper import DataDumper
+
+logger = logging.getLogger(__name__)
+
+
+class InferenceRunner(object):
+    def __init__(self, configs: Any,cyclic: int = 0) -> None:
+        self.configs = configs
+        self.cyclic = cyclic
+        self.init_env()
+        self.init_basics()
+        self.init_model()
+        self.load_checkpoint()
+        self.init_dumper(
+            need_atom_confidence=configs.need_atom_confidence,
+            sorted_by_ranking_score=configs.sorted_by_ranking_score,
+        )
+
+    def init_env(self) -> None:
+        self.print(
+            f"Distributed environment: world size: {DIST_WRAPPER.world_size}, "
+            + f"global rank: {DIST_WRAPPER.rank}, local rank: {DIST_WRAPPER.local_rank}"
+        )
+        self.use_cuda = torch.cuda.device_count() > 0
+        if self.use_cuda:
+            self.device = torch.device("cuda:{}".format(DIST_WRAPPER.local_rank))
+            os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+            all_gpu_ids = ",".join(str(x) for x in range(torch.cuda.device_count()))
+            devices = os.getenv("CUDA_VISIBLE_DEVICES", all_gpu_ids)
+            logging.info(
+                f"LOCAL_RANK: {DIST_WRAPPER.local_rank} - CUDA_VISIBLE_DEVICES: [{devices}]"
+            )
+            torch.cuda.set_device(self.device)
+        else:
+            self.device = torch.device("cpu")
+        if DIST_WRAPPER.world_size > 1:
+            dist.init_process_group(backend="nccl")
+        if self.configs.use_deepspeed_evo_attention:
+            env = os.getenv("CUTLASS_PATH", None)
+            self.print(f"env: {env}")
+            assert (
+                env is not None
+            ), "if use ds4sci, set `CUTLASS_PATH` env as https://www.deepspeed.ai/tutorials/ds4sci_evoformerattention/"
+            if env is not None:
+                logging.info(
+                    "The kernels will be compiled when DS4Sci_EvoformerAttention is called for the first time."
+                )
+        use_fastlayernorm = os.getenv("LAYERNORM_TYPE", None)
+        if use_fastlayernorm == "fast_layernorm":
+            logging.info(
+                "The kernels will be compiled when fast_layernorm is called for the first time."
+            )
+
+        logging.info("Finished init ENV.")
+
+    def init_basics(self) -> None:
+        self.dump_dir = self.configs.dump_dir
+        self.error_dir = opjoin(self.dump_dir, "ERR")
+        os.makedirs(self.dump_dir, exist_ok=True)
+        os.makedirs(self.error_dir, exist_ok=True)
+
+    def init_model(self) -> None:
+        self.model = Protenix(self.configs,self.cyclic).to(self.device)
+
+    def load_checkpoint(self) -> None:
+        checkpoint_path = self.configs.load_checkpoint_path
+        if not os.path.exists(checkpoint_path):
+            raise Exception(f"Given checkpoint path not exist [{checkpoint_path}]")
+        self.print(f"Loading from {checkpoint_path}")
+        checkpoint = torch.load(checkpoint_path, self.device)
+
+        sample_key = [k for k in checkpoint["model"].keys()][0]
+        self.print(f"Sampled key: {sample_key}")
+        if sample_key.startswith("module."):  # DDP checkpoint has module. prefix
+            checkpoint["model"] = {
+                k[len("module.") :]: v for k, v in checkpoint["model"].items()
+            }
+        self.model.load_state_dict(
+            state_dict=checkpoint["model"],
+            strict=self.configs.load_strict,
+        )
+        self.model.eval()
+        self.print(f"Finish loading checkpoint.")
+
+    def init_dumper(
+        self, need_atom_confidence: bool = False, sorted_by_ranking_score: bool = True
+    ):
+        self.dumper = DataDumper(
+            base_dir=self.dump_dir,
+            need_atom_confidence=need_atom_confidence,
+            sorted_by_ranking_score=sorted_by_ranking_score,
+        )
+
+    # Adapted from runner.train.Trainer.evaluate
+    @torch.no_grad()
+    def predict(self, data: Mapping[str, Mapping[str, Any]],
+                 diffusion_steps=0, input_atom_array_path="") -> dict[str, torch.Tensor]:
+        eval_precision = {
+            "fp32": torch.float32,
+            "bf16": torch.bfloat16,
+            "fp16": torch.float16,
+        }[self.configs.dtype]
+
+        enable_amp = (
+            torch.autocast(device_type="cuda", dtype=eval_precision)
+            if torch.cuda.is_available()
+            else nullcontext()
+        )
+        
+        data = to_device(data, self.device)
+        with enable_amp:
+            prediction, _, _ = self.model(
+                input_feature_dict=data["input_feature_dict"],
+                label_full_dict=None,
+                label_dict=None,
+                mode="inference",
+                diffusion_steps=diffusion_steps,
+                input_atom_array_path=input_atom_array_path
+            )
+
+        return prediction
+
+    def print(self, msg: str):
+        if DIST_WRAPPER.rank == 0:
+            logger.info(msg)
+
+    def update_model_configs(self, new_configs: Any) -> None:
+        self.model.configs = new_configs
+
+
+def download_infercence_cache(configs: Any, model_version: str = "v0.2.0") -> None:
+
+    for cache_name in ("ccd_components_file", "ccd_components_rdkit_mol_file"):
+        cur_cache_fpath = configs["data"][cache_name]
+        if not opexists(cur_cache_fpath):
+            os.makedirs(os.path.dirname(cur_cache_fpath), exist_ok=True)
+            tos_url = URL[cache_name]
+            assert os.path.basename(tos_url) == os.path.basename(cur_cache_fpath), (
+                f"{cache_name} file name is incorrect, `{tos_url}` and "
+                f"`{cur_cache_fpath}`. Please check and try again."
+            )
+            logger.info(
+                f"Downloading data cache from\n {tos_url}... to {cur_cache_fpath}"
+            )
+            urllib.request.urlretrieve(tos_url, cur_cache_fpath)
+
+    checkpoint_path = configs.load_checkpoint_path
+
+    if not opexists(checkpoint_path):
+        os.makedirs(os.path.dirname(checkpoint_path), exist_ok=True)
+        tos_url = URL[f"model_{model_version}"]
+        logger.info(
+            f"Downloading model checkpoint from\n {tos_url}... to {checkpoint_path}"
+        )
+        urllib.request.urlretrieve(tos_url, checkpoint_path)
+        try:
+            ckpt = torch.load(checkpoint_path)
+            del ckpt
+        except:
+            os.remove(checkpoint_path)
+            raise RuntimeError(
+                "Download model checkpoint failed, please download by yourself with "
+                f"wget {tos_url} -O {checkpoint_path}"
+            )
+
+
+def update_inference_configs(configs: Any, N_token: int):
+    # Setting the default inference configs for different N_token and N_atom
+    # when N_token is larger than 3000, the default config might OOM even on a
+    # A100 80G GPUS,
+    if N_token > 3840:
+        configs.skip_amp.confidence_head = False
+        configs.skip_amp.sample_diffusion = False
+    elif N_token > 2560:
+        configs.skip_amp.confidence_head = False
+        configs.skip_amp.sample_diffusion = True
+    else:
+        configs.skip_amp.confidence_head = True
+        configs.skip_amp.sample_diffusion = True
+    return configs
+
+
+def infer_predict(runner: InferenceRunner, configs: Any, diffusion_steps=0, input_atom_array_path="") -> None:
+    # Data
+    logger.info(f"Loading data from\n{configs.input_json_path}")
+    try:
+        dataloader = get_inference_dataloader(configs=configs)
+    except Exception as e:
+        error_message = f"{e}:\n{traceback.format_exc()}"
+        logger.info(error_message)
+        with open(opjoin(runner.error_dir, "error.txt"), "a") as f:
+            f.write(error_message)
+        return
+
+    num_data = len(dataloader.dataset)
+    for seed in configs.seeds:
+        seed_everything(seed=seed, deterministic=configs.deterministic)
+        for batch in dataloader:
+            try:
+                data, atom_array, data_error_message = batch[0]
+                sample_name = data["sample_name"]
+
+                if len(data_error_message) > 0:
+                    logger.info(data_error_message)
+                    with open(opjoin(runner.error_dir, f"{sample_name}.txt"), "a") as f:
+                        f.write(data_error_message)
+                    continue
+
+                #logger.info(
+                #    (
+                #        f"[Rank {DIST_WRAPPER.rank} ({data['sample_index'] + 1}/{num_data})] {sample_name}: "
+                #        f"N_asym {data['N_asym'].item()}, N_token {data['N_token'].item()}, "
+                #        f"N_atom {data['N_atom'].item()}, N_msa {data['N_msa'].item()}"
+                #    )
+                #)
+                new_configs = update_inference_configs(configs, data["N_token"].item())
+                runner.update_model_configs(new_configs)
+                prediction = runner.predict(data, diffusion_steps, input_atom_array_path)
+                #torch.save(prediction,"/storage/caolongxingLab/fangminchao/software/Protenix/prediction.pkl")
+                runner.dumper.dump(
+                    dataset_name="",
+                    pdb_id=sample_name,
+                    seed=seed,
+                    pred_dict=prediction,
+                    atom_array=atom_array,
+                    entity_poly_type=data["entity_poly_type"],
+                )
+
+                #logger.info(
+                #    f"[Rank {DIST_WRAPPER.rank}] {data['sample_name']} succeeded.\n"
+                #    f"Results saved to {configs.dump_dir}"
+                #)
+                torch.cuda.empty_cache()
+            except Exception as e:
+                error_message = f"[Rank {DIST_WRAPPER.rank}]{data['sample_name']} {e}:\n{traceback.format_exc()}"
+                logger.info(error_message)
+                # Save error info
+                with open(opjoin(runner.error_dir, f"{sample_name}.txt"), "a") as f:
+                    f.write(error_message)
+                if hasattr(torch.cuda, "empty_cache"):
+                    torch.cuda.empty_cache()
+    return prediction
+
+
+def main(configs: Any) -> None:
+    # Runner
+    runner = InferenceRunner(configs)
+    infer_predict(runner, configs)
+
+
+def run() -> None:
+    LOG_FORMAT = "%(asctime)s,%(msecs)-3d %(levelname)-8s [%(filename)s:%(lineno)s %(funcName)s] %(message)s"
+    logging.basicConfig(
+        format=LOG_FORMAT,
+        level=logging.INFO,
+        datefmt="%Y-%m-%d %H:%M:%S",
+        filemode="w",
+    )
+    configs_base["use_deepspeed_evo_attention"] = (
+        os.environ.get("USE_DEEPSPEED_EVO_ATTENTION", False) == "true"
+    )
+    configs = {**configs_base, **{"data": data_configs}, **inference_configs}
+    configs = parse_configs(
+        configs=configs,
+        arg_str=parse_sys_args(),
+        fill_required_with_null=True,
+    )
+    download_infercence_cache(configs, model_version="beta1_v0.2.0")
+    main(configs)
+
+
+if __name__ == "__main__":
+    run()
+
+from typing import Any, Mapping, Optional, Dict, Tuple, List
+
+class DictToAttr:
+    """Convert dictionary to object with attribute access."""
+    def __init__(self, dictionary):
+        self._original_dict = {}
+        for key, value in dictionary.items():
+            if isinstance(value, dict):
+                attr_value = DictToAttr(value)
+                setattr(self, key, attr_value)
+                self._original_dict[key] = value
+            else:
+                setattr(self, key, value)
+                self._original_dict[key] = value
+    
+    def copy(self):
+        """Create a copy of the object."""
+        result = DictToAttr({})
+        for key, value in self.__dict__.items():
+            if key == '_original_dict':
+                continue
+            if isinstance(value, DictToAttr):
+                setattr(result, key, value.copy())
+                result._original_dict[key] = value._original_dict
+            else:
+                setattr(result, key, value)
+                result._original_dict[key] = value
+        return result
+    
+    def to_dict(self):
+        """Convert back to dictionary."""
+        result = {}
+        for key, value in self.__dict__.items():
+            if key == '_original_dict':
+                continue
+            if isinstance(value, DictToAttr):
+                result[key] = value.to_dict()
+            else:
+                result[key] = value
+        return result
+    
+    def __getitem__(self, key):
+        """Support dictionary-style access."""
+        return getattr(self, key)
+    
+    def __setitem__(self, key, value):
+        """Support dictionary-style setting."""
+        setattr(self, key, value)
+        self._original_dict[key] = value
+    
+    def __contains__(self, key):
+        """Support 'in' operator."""
+        return hasattr(self, key)
+    
+    def keys(self):
+        """Return keys like a dictionary."""
+        return [k for k in self.__dict__.keys() if k != '_original_dict']
+    
+    def values(self):
+        """Return values like a dictionary."""
+        return [v for k, v in self.__dict__.items() if k != '_original_dict']
+    
+    def items(self):
+        """Return items like a dictionary."""
+        return [(k, v) for k, v in self.__dict__.items() if k != '_original_dict']
+
+import copy
+class ProtenixInferrer:
+    def __init__(self, cyclic= 0, **kwargs ):
+        """
+        Initializes the ProtenixInferrer with static configuration parameters.
+
+        Args:
+            **kwargs: Keyword arguments corresponding to the initial configuration
+                      parameters that would normally be passed via command line
+                      except for input_json_path, dump_dir, and seed.
+                      Example: model.N_cycle=10, sample_diffusion.N_sample=5,
+                      use_esm=True, use_msa=False, etc.
+        """
+        LOG_FORMAT = "%(asctime)s,%(msecs)-3d %(levelname)-8s [%(filename)s:%(lineno)s %(funcName)s] %(message)s"
+        logging.basicConfig(
+            format=LOG_FORMAT,
+            level=logging.INFO,
+            datefmt="%Y-%m-%d %H:%M:%S",
+            filemode="w",
+        )
+        
+        self.configs_base = configs_base
+        self.data_configs = data_configs
+        self.inference_configs = inference_configs
+        self.DIST_WRAPPER = DIST_WRAPPER # Store for later use
+        self.get_inference_dataloader = get_inference_dataloader
+        self.Protenix = Protenix
+        self.seed_everything = seed_everything
+        self.to_device = to_device
+        self.URL = URL
+        self.DataDumper = DataDumper
+        self.cyclic = cyclic
+
+        # Prepare arguments for parse_configs
+        arg_list = []
+        for key, value in kwargs.items():
+            # Handle boolean values specifically if they are passed as Python booleans
+            # and need to be converted to string for argparse-like parsing.
+            if isinstance(value, bool):
+                arg_list.append(f"--{key}={str(value).lower()}")
+            else:
+                arg_list.append(f"--{key}={value}")
+        
+        # Add deepspeed attention config from environment variable
+        use_deepspeed_evo_attention = os.environ.get("USE_DEEPSPEED_EVO_ATTENTION", "false") == "true"
+        if use_deepspeed_evo_attention:
+            arg_list.append("--use_deepspeed_evo_attention=True")
+
+        # Combine base, data, and inference configs
+        combined_configs = {**self.configs_base, **{"data": self.data_configs}, **self.inference_configs}
+
+        # Parse configurations, simulating command-line arguments
+        self.configs = parse_configs(
+            configs=combined_configs,
+            arg_str=" ".join(arg_list), # Pass as a single string
+            fill_required_with_null=True,
+        )
+
+        # Download inference cache and model checkpoint
+        download_infercence_cache(self.configs, model_version="beta1_v0.2.0")
+        
+        # Initialize the InferenceRunner
+        self.runner = InferenceRunner(self.configs,self.cyclic)
+
+    def predict(self, input_json_path: str, 
+                dump_dir: str, 
+                seed: int,
+                input_atom_array_path: str = "", 
+                diffusion_steps: int = 0 
+                ) -> None:
+        """
+        Executes the prediction process with the specified input, output, and seed.
+
+        Args:
+            input_json_path (str): Path to the input JSON file.
+            dump_dir (str): Directory to dump results.
+            seed (int): Random seed for the prediction.
+        """
+        # Update configs with parameters specific to this prediction call
+        current_configs = copy.deepcopy(self.configs) # Create a deep copy to avoid modifying base configs
+        current_configs.input_json_path = input_json_path
+        current_configs.dump_dir = dump_dir
+        current_configs.seeds = [seed] # Expects a list of seeds
+
+        # Update the runner's dump_dir and error_dir for this specific run
+        self.runner.dump_dir = current_configs.dump_dir
+        self.runner.error_dir = opjoin(current_configs.dump_dir, "ERR")
+        os.makedirs(self.runner.dump_dir, exist_ok=True)
+        os.makedirs(self.runner.error_dir, exist_ok=True)
+
+        # Re-initialize dumper as dump_dir might have changed
+        self.runner.init_dumper(
+            need_atom_confidence=current_configs.need_atom_confidence,
+            sorted_by_ranking_score=current_configs.sorted_by_ranking_score,
+        )
+
+        # Call the original infer_predict function with the updated runner and configs
+        prediction=infer_predict(self.runner, current_configs, diffusion_steps, input_atom_array_path)
+
+        return prediction
