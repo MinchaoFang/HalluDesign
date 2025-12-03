@@ -4,6 +4,8 @@ HalluDesign, a hallucination-driven all-atom framework for the iterative co-opti
 
 # RUN HalluDesign
 ## Basic Command
+
+More examples can check in examples/
 ```
 python HalluDesign_run.py --input_file <pdb_file> --output_dir <out_dir> --prediction_model <af3 or protenix> --template_path <af3 json or protenix json>
 ```
@@ -47,8 +49,7 @@ build_data
 mamba install -c pytorch torch==2.6.0 torchvision torchaudio pytorch-cuda=12.1
 pip install torch==2.6.0 torchaudio==2.6.0 torchvision==0.21.0 numpy==1.23.5 biopython==1.79 prody==2.4.1 pandas==2.2.3 -f https://download.pytorch.org/whl/cu126
 pip install torch-scatter -f https://data.pyg.org/whl/torch-2.6.0+cu126.html
-pip install ml-collections==0.1.1
-pip install transformers==4.50.0 fair-esm==2.0.0
+pip install ml-collections==0.1.1 transformers==4.50.0 fair-esm==2.0.0
 pip install biopython==1.80
 cd LigandMPNN
 bash get_model_params.sh "./model_params"
