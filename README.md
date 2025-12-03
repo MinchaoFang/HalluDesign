@@ -5,7 +5,7 @@ HalluDesign, a hallucination-driven all-atom framework for the iterative co-opti
 # RUN HalluDesign
 ## Basic Command
 ```
-python 
+python HalluDesign_run.py --input_file <pdb_file> --output_dir <out_dir> --prediction_model <af3 or protenix> 
 ```
 ###
 You need to prepare a json file which serve your purpose, protein chain to design should be put in Chain A.
