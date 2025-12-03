@@ -1,0 +1,17 @@
+{
+    "name": "test",
+    "sequences": [
+      {
+        "protein": {
+          "id": ["A"],
+          "sequence": "NPYARGPNPTAASLEASAGPFTVRSFTVSRPSGYGAGTVYYPTNAGGTVGAIAIVPGYTARQSSSIKWWGPRLASHGFVVITIDTNSTLDQPSSSRSSQQMAALGQVASLNGTSSSPIYGKVDTARMMGVMGWAMGGGGSLISAANNPSSLKAAAPQAPWDSSTNFSSVTVPTLIFACENDSSIAPVNSSSALPIYDSMSRNAKQFLEINGGSHSCANSGNSNQALIGKKGVAWMKRFMDNDTRYSTFACENPNSTRVSDFRTANCS",
+          "unpairedMsa": "",
+          "pairedMsa": "",
+          "templates": []
+        }
+      }
+    ],
+    "modelSeeds": [1],
+    "dialect": "alphafold3",
+    "version": 1
+  }

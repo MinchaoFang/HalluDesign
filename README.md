@@ -7,7 +7,15 @@ HalluDesign, a hallucination-driven all-atom framework for the iterative co-opti
 
 More examples can check in examples/
 ```
-python HalluDesign_run.py --input_file <pdb_file> --output_dir <out_dir> --prediction_model <af3 or protenix> --template_path <af3 json or protenix json>
+python HalluDesign_run.py 
+--input_file <pdbfile> or --pdb_list <pdblist>
+--output_dir <outdir> 
+--prediction_model <af3 or protenix> 
+--template_path <af3 json or protenix json>
+--ref_time_steps <HalluDesign diffusion steps, 50 for local optimization, 150 for global optimization and design>
+--num_seqs <num sequences per cycle>
+--design_epoch_begin <number_of_initial_cycles_to_skip>
+--random_init # for from scratch design
 ```
 ###
 You need to prepare a json file which serve your purpose, protein chain to design should be put in Chain A.
@@ -36,7 +44,7 @@ git clone https://github.com/MinchaoFang/HalluDesign.git
 conda create -n HalluDesign python=3.11 -y
 conda activate HalluDesign
 cd HalluDesign
-conda install -c conda-forge c-compiler cxx-compiler cmake ninja zlib
+conda install -c conda-forge c-compiler cxx-compiler cmake ninja zlib -y
 export CFLAGS="-I$CONDA_PREFIX/include"
 export CXXFLAGS="-I$CONDA_PREFIX/include"
 export LDFLAGS="-L$CONDA_PREFIX/lib"
@@ -46,25 +54,21 @@ build_data
 ```
 ### Install HalluDesign-AF3
 ```
-mamba install -c pytorch torch==2.6.0 torchvision torchaudio pytorch-cuda=12.1
-pip install torch==2.6.0 torchaudio==2.6.0 torchvision==0.21.0 numpy==1.23.5 biopython==1.79 prody==2.4.1 pandas==2.2.3 -f https://download.pytorch.org/whl/cu126
-pip install torch-scatter -f https://data.pyg.org/whl/torch-2.6.0+cu126.html
-pip install ml-collections==0.1.1 transformers==4.50.0 fair-esm==2.0.0
-pip install biopython==1.80
+pip install torch==2.6.0 torchaudio==2.6.0 torchvision==0.21.0 numpy==1.23.5 biopython==1.79 prody==2.4.1 pandas==2.2.3  -f https://download.pytorch.org/whl/cu126
+pip install ml-collections==0.1.1 transformers==4.50.0 fair-esm==2.0.0 triton==3.1.0
 cd LigandMPNN
 bash get_model_params.sh "./model_params"
 ```
-
 ### Install HalluDesign-Protenix (Optional)
 ```
 git clone https://github.com/NVIDIA/cutlass.git
 ```
 
 ### If you want to use CoDP (Optional)
+Pytorch-based CoDP has GPU memory problem with jax-based AF3, so we use pytorch-based Protenix as our foundationl model.
 ```
 git clone https://github.com/MinchaoFang/CoDP.git
 ```
-
 
 # Reference
 

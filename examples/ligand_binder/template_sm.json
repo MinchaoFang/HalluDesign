@@ -1,0 +1,26 @@
+{
+    "name": "test",
+    "sequences": [
+      {
+        "protein": {
+          "id": ["A"],
+          "sequence": "NPYARGPNPTAASLEASAGPFTVRSFTVSRPSGYGAGTVYYPTNAGGTVGAIAIVPGYTARQSSSIKWWGPRLASHGFVVITIDTNSTLDQPSSSRSSQQMAALGQVASLNGTSSSPIYGKVDTARMMGVMGWAMGGGGSLISAANNPSSLKAAAPQAPWDSSTNFSSVTVPTLIFACENDSSIAPVNSSSALPIYDSMSRNAKQFLEINGGSHSCANSGNSNQALIGKKGVAWMKRFMDNDTRYSTFACENPNSTRVSDFRTANCS",
+          "unpairedMsa": "",
+          "pairedMsa": "",
+          "templates": []
+        }
+      },
+      {
+        "ligand": {
+          "id": [
+            "B"
+          ],
+          "smiles": 
+            "[C]O[C]([O-])c1[c][c]c([C]([O-])O[C][C][O-])[c][c]1"
+        }
+      }
+    ],
+    "modelSeeds": [1],
+    "dialect": "alphafold3",
+    "version": 1
+  }

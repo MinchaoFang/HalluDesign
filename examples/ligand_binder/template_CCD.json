@@ -1,0 +1,23 @@
+{
+  "name": "test",
+  "sequences": [
+    {
+      "protein": {
+        "id": ["A"],
+        "sequence": "NPYARGPNPTAASLEASAGPFTVRSFTVSRPSGYGAGTVYYPTNAGGTVGAIAIVPGYTARQSSSIKWWGPRLASHGFVVITIDTNSTLDQPSSSRSSQQMAALGQVASLNGTSSSPIYGKVDTARMMGVMGWAMGGGGSLISAANNPSSLKAAAPQAPWDSSTNFSSVTVPTLIFACENDSSIAPVNSSSALPIYDSMSRNAKQFLEINGGSHSCANSGNSNQALIGKKGVAWMKRFMDNDTRYSTFACENPNSTRVSDFRTANCS",
+        "unpairedMsa": "",
+        "pairedMsa": "",
+        "templates": []
+      }
+    },
+    {
+      "ligand": {
+        "id": ["B"],
+        "ccdCodes": ["ZN"]
+      }
+    }
+  ],
+  "modelSeeds": [1],
+  "dialect": "alphafold3",
+  "version": 1
+}

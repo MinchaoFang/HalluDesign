@@ -1,7 +1,7 @@
 {
   "dialect": "alphafold3",
   "version": 1,
-  "name": "test_b5cbf",
+  "name": "test",
   "sequences": [
     {
       "protein": {
