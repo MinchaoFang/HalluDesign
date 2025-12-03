@@ -24,7 +24,6 @@ import json
 import csv
 import os
 import sys
-sys.path.insert(0,"/storage/caolongxingLab/fangminchao/Proteus/Proteus_flow_matching")
 from omegaconf import OmegaConf
 from colabdesign.af.model import mk_af_model
 from ProteinMPNN.protein_mpnn_utils import model_init

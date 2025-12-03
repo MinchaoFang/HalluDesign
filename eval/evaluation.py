@@ -2,7 +2,6 @@ import os
 import subprocess
 from typing import Dict, List, Tuple
 import sys
-sys.path.insert(0,"/storage/caolongxingLab/fangminchao/Proteus/Proteus_flow_matching")
 from scripts.input_pkl_preprocess import process_single_file
 from eval.eval_utility import get_random_seeds,PeptideSynthesizer,get_gpu_memory
 from data.op_utility import most_central_residue_resseq

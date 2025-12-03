@@ -1,0 +1,39 @@
+{
+    "name": "gd_dimer",
+    "sequences": [
+      {
+        "protein": {
+          "id": ["A"],
+          "sequence": "NPYARGPNPTAASLEASAGPFTVRSFTVSRPSGYGAGTVYYPTNAGGTVGAIAIVPGYTARQSSSIKWWGPRLASHGFVVITIDTNSTLDQPSSSRSSQQMAALGQVASLNGTSSSPIYGKVDTARMMGVMGWAMGGGGSLISAANNPSSLKAAAPQAPWDSSTNFSSVTVPTLIFACENDSSIAPVNSSSALPIYDSMSRNAKQFLEINGGSHSCANSGNSNQALIGKKGVAWMKRFMDNDTRYSTFACENPNSTRVSDFRTANCS",
+          "unpairedMsa": "",
+          "pairedMsa": "",
+          "templates": []
+        }
+      },
+      {
+        "protein": {
+          "id": ["B"],
+          "sequence": "NPYARGPNPTAASLEASAGPFTVRSFTVSRPSGYGAGTVYYPTNAGGTVGAIAIVPGYTARQSSSIKWWGPRLASHGFVVITIDTNSTLDQPSSSRSSQQMAALGQVASLNGTSSSPIYGKVDTARMMGVMGWAMGGGGSLISAANNPSSLKAAAPQAPWDSSTNFSSVTVPTLIFACENDSSIAPVNSSSALPIYDSMSRNAKQFLEINGGSHSCANSGNSNQALIGKKGVAWMKRFMDNDTRYSTFACENPNSTRVSDFRTANCS",
+          "unpairedMsa": "",
+          "pairedMsa": "",
+          "templates": []
+        }
+      },
+      {
+        "protein": {
+          "id": ["C"],
+          "sequence": "EFRHDSGYEV",
+          "modifications": [
+          {"ptmType": "SEP", "ptmPosition": 6}
+        ],
+          "unpairedMsa": "",
+          "pairedMsa": "",
+          "templates": []
+        }
+      }
+    ],
+    "modelSeeds": [1],
+    "dialect": "alphafold3",
+    "version": 1
+  }
+

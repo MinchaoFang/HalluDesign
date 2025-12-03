@@ -15,6 +15,7 @@ python HalluDesign_run.py
 --ref_time_steps <HalluDesign diffusion steps, 50 for local optimization, 150 for global optimization and design>
 --num_seqs <num sequences per cycle>
 --design_epoch_begin <number_of_initial_cycles_to_skip>
+--mpnn <ligand_mpnn or protein_mpnn>
 --random_init # for from scratch design
 ```
 ###
@@ -32,7 +33,7 @@ PTM binder design requires that the json contains a defined post-translational m
 
 ## Singularity
 
-for those can use Singularity, we offer singularity file at here.
+For those can use Singularity, we offer singularity sif file at here.
 ```
 https://doi.org/10.5281/zenodo.17789892
 ```

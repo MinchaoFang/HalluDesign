@@ -19,7 +19,6 @@ import math
 import json
 import sys
 from data_utility import find_pocket_residues , common_elements
-sys.path.insert(0,"/storage/caolongxingLab/fangminchao/Proteus/Proteus_flow_matching")
 import esm.esmfold.v1.pretrained
 import esm.esmfold.v1.esmfold
 from copy import deepcopy
