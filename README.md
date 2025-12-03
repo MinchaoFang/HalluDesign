@@ -3,28 +3,46 @@
 HalluDesign, a hallucination-driven all-atom framework for the iterative co-optimization and co-design of protein sequences and structures by leveraging the forward pass of a structure prediction model
 
 # RUN HalluDesign
+## Basic Command
+```
+python 
+```
 ###
-You need to prepare a json file which serve your purpose, protein chain to design should be put in first
+You need to prepare a json file which serve your purpose, protein chain to design should be put in Chain A.
 ####
-Binder design: target should contain MSA and Templates
+Binder design: target should contain MSA and Templates which are in AF3 standard format.
 ####
 PTM binder design requires that the json contains a defined post-translational modifications.
 ###
 
 
+###
+
 # Installation
+
+## Singularity
+
+for those can use Singularity, we offer singularity file at here.
+```
+https://doi.org/10.5281/zenodo.17789892
+```
+## Conda 
+
 ### Install AF3
 ```
 git clone https://github.com/MinchaoFang/HalluDesign.git
 conda create -n HalluDesign python=3.11 -y
 conda activate HalluDesign
 cd HalluDesign
-conda install -c conda-forge c-compiler cxx-compiler cmake ninja zlib libzlib-devel
+conda install -c conda-forge c-compiler cxx-compiler cmake ninja zlib
+export CFLAGS="-I$CONDA_PREFIX/include"
+export CXXFLAGS="-I$CONDA_PREFIX/include"
+export LDFLAGS="-L$CONDA_PREFIX/lib"
 pip install -r dev-requirements.txt
 pip install --no-deps .
 build_data
 ```
-### Install HalluDesign AF3
+### Install HalluDesign-AF3
 ```
 mamba install -c pytorch torch==2.6.0 torchvision torchaudio pytorch-cuda=12.1
 pip install torch==2.6.0 torchaudio==2.6.0 torchvision==0.21.0 numpy==1.23.5 biopython==1.79 prody==2.4.1 pandas==2.2.3 -f https://download.pytorch.org/whl/cu126
@@ -36,7 +54,7 @@ cd LigandMPNN
 bash get_model_params.sh "./model_params"
 ```
 
-### Install HalluDesign Protenix (Optional)
+### Install HalluDesign-Protenix (Optional)
 ```
 git clone https://github.com/NVIDIA/cutlass.git
 ```
@@ -57,7 +75,6 @@ git clone https://github.com/MinchaoFang/CoDP.git
 	year = {2025},
 	doi = {10.1101/2025.11.08.686881},
 	publisher = {Cold Spring Harbor Laboratory},
-	abstract = {Deep learning has revolutionized biomolecular modeling, enabling the prediction of diverse structures with atomic accuracy. However, leveraging the atomic-level precision of the structure prediction model for de novo design remains challenging. Here, we present HalluDesign, a general all-atom framework for protein optimization and de novo design, which iteratively update protein structure and sequence. HalluDesign harnesses the inherent hallucination capabilities of AlphaFold3-style structure prediction models and enables fine-tune free, forward-pass only sequence-structure co-optimization. Structure conditioning at different noise level in the structure prediction stage allows precise control over the sampling space, facilitating tasks from local and global protein optimization to de novo design. We demonstrate the versatility of this approach by optimizing suboptimal structures, rescuing previously unsuccessful designs, designing new biomolecular interactions and generating new protein structures from scratch. Experimental characterization of binder design spanning small molecule, metal ion, protein, and antibody design of phosphorylation-specific peptide revealed high design success rates and excellent structural accuracy. Together, our comprehensive computational and experimental results highlight the broad utility of this framework. We anticipate that HalluDesign will further unlock the modeling and design potential of AlphaFold3-like models, enabling the systematic creation of complex proteins for a wide range of biotechnological applications.Competing Interest StatementThe authors have declared no competing interest.},
 	URL = {https://www.biorxiv.org/content/early/2025/11/09/2025.11.08.686881},
 	eprint = {https://www.biorxiv.org/content/early/2025/11/09/2025.11.08.686881.full.pdf},
 	journal = {bioRxiv}
