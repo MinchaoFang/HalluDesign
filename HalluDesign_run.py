@@ -25,7 +25,7 @@ from eval.evaluation import  CoDP
 
 from eval.eval_utility import get_random_seeds,generate_metrics,get_global_residue_index
 from LigandMPNN.package import MPNNModel
-from af3_model import AF3DesignerPack
+
 import subprocess
 import math
 from copy import deepcopy
@@ -215,6 +215,7 @@ def main():
         fixed_chains = []
 
     if args.prediction_model  == "af3":
+        from af3_model import AF3DesignerPack
         Designer_model = AF3DesignerPack(jax_compilation_dir=os.path.join(args.output_dir,"jax_compilation_cache_dir"))
         protein_chains, ligand_chains, dna_chains, rna_chains, chain_types =  count_chain_based_on_json(args.template_path)
         metrics = generate_metrics(protein_chains,ligand_chains, dna_chains, rna_chains,chain_types)
@@ -323,41 +324,41 @@ def main():
                     run_af3=not is_last_cycle  #  AF3 not run in last cycle
                 )
                 elif args.prediction_model  == "protenix":
-                    metrics, next_input ,chain_number_list_cdr= protenix_op_protenix_eval(
-                    current_input,
-                    cycle,
-                    args.output_dir,
-                    args.template_path,
-                    args.template_for_eval,
-                    mpnn_model,
-                    mpnn_config_dict,
-                    Designer_model,
-                    args.ref_time_steps,
-                    args.num_samples,
-                    args.num_seeds,
-                    args.ref_eval,
-                     chain_types,
-                     fixed_chains,
-                     fixed_residues,
-                     bais_per_residues,
-                    metrics,
-                    args.ptm,
-                    args.symmetry_residues,
-                    args.symmetry_chains,
-                    args.sm,
-                    args.ccd,
-                    args.dna,
-                    args.rna,
-                    args.cdr,
-                    args.random_init,
-                    args.framework_seq,
-                    evaluator,
-                    design_begin,
-                    chain_number_list_cdr,
-                    args.cyclic,
-                    args.replace_MSA,
-                    run_af3=not is_last_cycle  #  AF3 not run in last cycle
+                    metrics, next_input, chain_number_list_cdr = protenix_op_protenix_eval(
+                    pdb_file=current_input,
+                    cycle=cycle,
+                    output_dir=args.output_dir,
+                    template_path=args.template_path,
+                    template_for_eval=args.template_for_eval,
+                    mpnn_model=mpnn_model,
+                    mpnn_config_dict=mpnn_config_dict,
+                    Designer_model=Designer_model,
+                    ref_time_steps=args.ref_time_steps,
+                    num_samples=args.num_samples,
+                    num_seeds=args.num_seeds,
+                    ref_eval=args.ref_eval,
+                    chain_types=chain_types,
+                    fixed_chains=fixed_chains,
+                    fixed_residues=fixed_residues,
+                    bais_per_residues=bais_per_residues,
+                    metrics=metrics,
+                    ptm=args.ptm,
+                    symmetry_residues=args.symmetry_residues,
+                    symmetry_chains=args.symmetry_chains,
+                    sm=args.sm,
+                    ccd=args.ccd,
+                    dna=args.dna,
+                    rna=args.rna,
+                    cdr=args.cdr,
+                    framework_seq=args.framework_seq,
+                    evaluator=evaluator,
+                    design_begin=design_begin,
+                    chain_number_list_cdr=chain_number_list_cdr,
+                    cyclic=args.cyclic,
+                    random_init=args.random_init,
+                    run_af3=not is_last_cycle
                 )
+
                 all_results.append(metrics)
                 current_input = next_input  # update for next cycle
 

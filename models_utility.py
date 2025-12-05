@@ -476,25 +476,26 @@ try:
                     template_path_for_eval = template_for_eval
                 else:
                     template_path_for_eval = template_path
-                metrics=self_consistency_protenix(
-                    copied_file,
-                    Designer_model,
-                    AF3_sm_dir,
-                    template_path_for_eval,
-                    sm,
-                    ccd_LG,
-                    ccd_codes,
-                    dna,
-                    rna,
-                    ref_eval,
-                    chain_types,
-                    pocket_res,
-                    fixed_chains,
-                    plddt_good_indicates,
-                    cyclic,
-                    metrics,
+                metrics = self_consistency_protenix(
+                    scaffold_path=copied_file,
+                    AF3Designer_model=Designer_model,
+                    output_dir=AF3_sm_dir,
+                    template_path=template_path_for_eval,
+                    sm=sm,
+                    ccd_LG=ccd_LG,
+                    ccd_codes=ccd_codes,
+                    dna=dna,
+                    rna=rna,
+                    ref_eval=ref_eval,
+                    chain_types=chain_types,
+                    pocket_res=pocket_res,
+                    fixed_chains=fixed_chains,
+                    plddt_good_indicates=plddt_good_indicates,
+                    cyclic=cyclic,
+                    metrics=metrics,
                     random_init=random_init
                 )
+
             else:
                 print("no af3 prediction")
 

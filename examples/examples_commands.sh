@@ -1,4 +1,5 @@
 # Protein Monomer optmization exmample
+# AF3
 python /storage/caolab/fangmc/for_pub/HalluDesign/HalluDesign_run.py --prediction_model af3 --input_file examples/monomer/monomer.pdb --template_path examples/monomer/template_und.json --mpnn "protein_mpnn" --output_dir $(pwd)/examples/monomer/HalluDesign_op --num_seqs 2 --num_recycles 10 --ref_time_steps 50
 
 # Protein binder optmization exmample

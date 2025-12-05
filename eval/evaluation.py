@@ -157,7 +157,6 @@ def self_consistency_protenix(scaffold_path,
                         AF3Designer_model,
                         output_dir,
                         template_path,
-                        template_for_eval_pep,
                         sm,  
                         ccd_LG,
                         ccd_codes,
@@ -173,7 +172,6 @@ def self_consistency_protenix(scaffold_path,
                         random_init= False):
     metrics_to_tile = []
     seq_count = 0
-    print(template_for_eval_pep)
     for metric in metrics:
         cyclic_prediction = cyclic
         packed = metric["packed_path"]
@@ -304,66 +302,59 @@ def self_consistency_protenix(scaffold_path,
             metric[f'eval_{label}_plddt'] = calculate_average_b_factor(cif_path,[label])
             metric[f'eval_{label}_ptm'] = dict_result['chain_ptm'][i].item()
         print("rmsd")
-        if template_for_eval_pep:
-            print("skip rmsd eval")
-        else:
-            try:
-                rmsd_result = calculate_ca_rmsd(cif_path, scaffold_path,fixed_chains)
-                print(rmsd_result)
-                _count =0
-                _sm_count = 0
-                #print(rmsd_result)
-                for chain in chain_types:
-                    label = chain_labels[_count]
-                    if chain == "protein":
-                        if fixed_chains:
-                            metric[f'eval_protein_{label}_rmsd'] = rmsd_result['protein_rmsd'][_count]
-                        else:
-                            metric[f'eval_protein_{label}_rmsd'] = rmsd_result['protein_rmsd'][0]
-                    if chain == 'ligand':
-                        metric[f'eval_ligand_{label}_rmsd'] = rmsd_result['ligand_rmsd'][_sm_count]
-                        metric[f'eval_atom_distances_{label}'] = rmsd_result['atom_distances'][_sm_count]
-                        _sm_count += 1
-                    if chain == 'dna':
-                        metric[f'eval_dna_{label}_rmsd'] = rmsd_result['dna_rmsd']
-                    if chain == 'rna':
-                        metric[f'eval_rna_{label}_rmsd'] = rmsd_result['rna_rmsd']
-                    _count += 1
-                print("rmsd")
-            except:
-                print("rmsd wrong")
-            if (sm_count != 0) or (rna_count != 0) or (dna_count!= 0):
-                metric[f'eval_key_res_plddt'] = calculate_plddt_avg(cif_path, pocket_res)
-                protein_indices = range(protein_count)
-                other_indices = range(protein_count, count)  # Indices of other chains
-                # Calculate iPTM of other chains relative to the protein chain
-                all_iptm_to_protein = []
-                all_ipae_to_protein = []
-                for i in protein_indices:
-                    for j in other_indices:
-                        all_iptm_to_protein.append(chain_pair_iptm[i][j])
-                        all_iptm_to_protein.append(chain_pair_iptm[j][i])
-
-                all_iptm_to_protein_val = [x for x in all_iptm_to_protein if x is not None]
-
-                if all_iptm_to_protein:
-                    metric[f'eval_all_iptm_to_protein'] = (sum(all_iptm_to_protein_val) / len(all_iptm_to_protein_val)).item()
-                else:
-                    metric[f'eval_all_iptm_to_protein'] = 0
-                
-                metric[f'eval_all_ipae_to_protein'] = 0
+        try:
+            rmsd_result = calculate_ca_rmsd(cif_path, scaffold_path,fixed_chains)
+            print(rmsd_result)
+            _count =0
+            _sm_count = 0
+            #print(rmsd_result)
+            for chain in chain_types:
+                label = chain_labels[_count]
+                if chain == "protein":
+                    if fixed_chains:
+                        metric[f'eval_protein_{label}_rmsd'] = rmsd_result['protein_rmsd'][_count]
+                    else:
+                        metric[f'eval_protein_{label}_rmsd'] = rmsd_result['protein_rmsd'][0]
+                if chain == 'ligand':
+                    metric[f'eval_ligand_{label}_rmsd'] = rmsd_result['ligand_rmsd'][_sm_count]
+                    metric[f'eval_atom_distances_{label}'] = rmsd_result['atom_distances'][_sm_count]
+                    _sm_count += 1
+                if chain == 'dna':
+                    metric[f'eval_dna_{label}_rmsd'] = rmsd_result['dna_rmsd']
+                if chain == 'rna':
+                    metric[f'eval_rna_{label}_rmsd'] = rmsd_result['rna_rmsd']
+                _count += 1
+            print("rmsd")
+        except:
+            print("rmsd wrong")
+        if (sm_count != 0) or (rna_count != 0) or (dna_count!= 0):
+            metric[f'eval_key_res_plddt'] = calculate_plddt_avg(cif_path, pocket_res)
+            protein_indices = range(protein_count)
+            other_indices = range(protein_count, count)  # Indices of other chains
+            # Calculate iPTM of other chains relative to the protein chain
+            all_iptm_to_protein = []
+            all_ipae_to_protein = []
+            for i in protein_indices:
                 for j in other_indices:
-                    label = chain_labels[j]
-                    cross_values_iptm = []
-                    for i in protein_indices:
-                        cross_values_iptm.append(chain_pair_iptm[i][j])
-                        cross_values_iptm.append(chain_pair_iptm[j][i])
-
-                    cross_values_iptm = [x for x in cross_values_iptm if x is not None]
-                    average_iptm = sum(cross_values_iptm) / len(cross_values_iptm) if cross_values_iptm else 0
-
-                    metric[f'eval_{label}_iptm'] = average_iptm.item()
-                    metric[f'eval_{label}_ipae'] = None
+                    all_iptm_to_protein.append(chain_pair_iptm[i][j])
+                    all_iptm_to_protein.append(chain_pair_iptm[j][i])
+            all_iptm_to_protein_val = [x for x in all_iptm_to_protein if x is not None]
+            if all_iptm_to_protein:
+                metric[f'eval_all_iptm_to_protein'] = (sum(all_iptm_to_protein_val) / len(all_iptm_to_protein_val)).item()
+            else:
+                metric[f'eval_all_iptm_to_protein'] = 0
+            
+            metric[f'eval_all_ipae_to_protein'] = 0
+            for j in other_indices:
+                label = chain_labels[j]
+                cross_values_iptm = []
+                for i in protein_indices:
+                    cross_values_iptm.append(chain_pair_iptm[i][j])
+                    cross_values_iptm.append(chain_pair_iptm[j][i])
+                cross_values_iptm = [x for x in cross_values_iptm if x is not None]
+                average_iptm = sum(cross_values_iptm) / len(cross_values_iptm) if cross_values_iptm else 0
+                metric[f'eval_{label}_iptm'] = average_iptm.item()
+                metric[f'eval_{label}_ipae'] = None
 
         seq_count += 1
         metrics_to_tile.append(metric)
@@ -747,10 +738,7 @@ def run_mpnn_evaluation(scaffold_path,
         metrics["packed_path"] = packed
         metrics['mpnn_sequence'] = seq
         metrics["eval_status"] = "Not run"
-        metrics['plip_score'] = plip_score
-        metrics['pi_stacking_score'] = pi_stacking_score
-        metrics['oxygen_score'] = oxygen_score
-        metrics['esm_score'] = oxygen_score
+        metrics['esm_score'] = score
         metrics_to_tile.append(metrics)
     return metrics_to_tile
 
