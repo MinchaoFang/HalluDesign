@@ -30,7 +30,7 @@ from colabdesign.af.model import mk_af_model
 from ProteinMPNN.protein_mpnn_utils import model_init
 from ProteinMPNN.protein_mpnn_pyrosetta import mpnn_design
 from data.parsers import from_pdb_string
-from scripts.self_consistency_evaluation import run_folding_and_evaluation
+from local_scripts.self_consistency_evaluation import run_folding_and_evaluation
 from data import protein
 from Bio.PDB import MMCIFParser, PDBIO, MMCIFIO, PDBParser
 from Bio.PDB import Structure, Model

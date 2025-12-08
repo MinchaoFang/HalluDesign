@@ -82,8 +82,8 @@ def parse_arguments():
                        help='af3 or Protenix')
     parser.add_argument('--ref_eval', action='store_true', default=False,
                     help='whether to use small molecular ref position in AF3 evaluation, which means direct send atom positions to AF3, only use it confidence head')
-    parser.add_argument('--esmhead', action='store_true', default=False,
-                    help='whether to use esmhead to validate sequence quality')
+    parser.add_argument('--CoDP', action='store_true', default=False,
+                    help='whether to use CoDP to validate sequence quality')
     parser.add_argument('--fake_msa', type=int,  default=None,
                        help='whether to use how many ProteinMPNN (for pure protien system) or LigandMPNN (for protien and ligand system) seqs to fake MSA')
     parser.add_argument('--sm', type=str, nargs='+', required=False, default=[],
@@ -204,7 +204,7 @@ def main():
     else:
         fixed_residues = []
     evaluator = None
-    if args.esmhead:
+    if args.CoDP:
         checkpoints_to_run = "./CoDP/ckpt/epoch_1_without_esm2.pth"
         esm_name = "facebook/esm2_t33_650M_UR50D"
         #! remain to do!
@@ -220,11 +220,12 @@ def main():
         protein_chains, ligand_chains, dna_chains, rna_chains, chain_types =  count_chain_based_on_json(args.template_path)
         metrics = generate_metrics(protein_chains,ligand_chains, dna_chains, rna_chains,chain_types)
     if args.prediction_model  == "protenix":
-        sys.path.insert(0,os.path.join(current_dir,"Protenix"))
+        #sys.path.insert(0,os.path.join(current_dir,"Protenix"))
         from runner.inference import ProtenixInferrer
         os.environ["LAYERNORM_TYPE"] = "fast_layernorm"
         os.environ["USE_DEEPSPEED_EVO_ATTENTION"] = "true"
-        os.environ["CUTLASS_PATH"] = "./cutlass" 
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        os.environ["CUTLASS_PATH"] = os.path.join(script_dir, "cutlass")
         static_configs = {
         "model.N_cycle": 10,
         "sample_diffusion.N_sample": 5,

@@ -607,7 +607,7 @@ python run.py \
 ### Things to add
 - Support for ProteinMPNN CA-only model.
 - Examples for scoring sequences only.
-- Side-chain packing scripts.
+- Side-chain packing local_scripts.
 - TER 
 
 

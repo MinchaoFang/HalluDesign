@@ -8,7 +8,7 @@ from eval.eval_utility import get_random_seeds,get_global_residue_index
 from data.utility import *
 import json
 import re
-from scripts.input_pkl_preprocess import process_single_file
+from local_scripts.input_pkl_preprocess import process_single_file
 def af3_op_af3_eval(pdb_file: str, 
                       cycle: int,
                       output_dir: str,

@@ -30,6 +30,9 @@ PTM binder design requires that the json contains a defined post-translational m
 ###
 
 # Installation
+AF3 model checkpoints should be placed in the ~/model directory.
+
+Protenix checkpoints will be downloaded automatically the first time the program is run.
 
 ## Singularity
 
@@ -37,6 +40,7 @@ For those can use Singularity, we offer singularity sif file at here.
 ```
 https://doi.org/10.5281/zenodo.17789892
 ```
+
 ## Conda 
 
 ### Install AF3
@@ -53,19 +57,23 @@ pip install -r dev-requirements.txt
 pip install --no-deps .
 build_data
 ```
-### Install HalluDesign-AF3
+### Install Protenix
 ```
-pip install torch==2.6.0 torchaudio==2.6.0 torchvision==0.21.0 numpy==1.23.5 biopython==1.79 prody==2.4.1 pandas==2.2.3  -f https://download.pytorch.org/whl/cu126
-pip install ml-collections==0.1.1 transformers==4.50.0 fair-esm==2.0.0 triton==3.1.0
+git clone https://github.com/NVIDIA/cutlass.git
+cd Protenix/
+pip install .
+mamba install -c conda-forge gcc=12 gxx=12
+```
+
+### Install HalluDesign
+```
+pip install torch==2.6.0 torchaudio==2.6.0 torchvision==0.21.0  biopython==1.79 prody==2.4.1 pandas==2.2.3  -f https://download.pytorch.org/whl/cu126
+pip install ml-collections==0.1.1 transformers==4.50.0 fair-esm==2.0.0 triton==3.1.0 numpy==1.26.3
 cd LigandMPNN
 bash get_model_params.sh "./model_params"
 ```
-### Install HalluDesign-Protenix (Optional)
-```
-git clone https://github.com/NVIDIA/cutlass.git
-```
 
-### If you want to use CoDP (Optional)
+## If you want to use CoDP (Optional)
 Pytorch-based CoDP has GPU memory problem with jax-based AF3, so we use pytorch-based Protenix as our foundationl model.
 ```
 git clone https://github.com/MinchaoFang/CoDP.git

@@ -17,9 +17,9 @@ from absl import flags
 import sys
 
 import os
-current_folder = os.path.dirname(os.path.abspath(__file__))
-src_folder = os.path.join(current_folder, 'src')
-sys.path.insert(0, src_folder)
+#current_folder = os.path.dirname(os.path.abspath(__file__))
+#src_folder = os.path.join(current_folder, 'src')
+#sys.path.insert(0, src_folder)
 
 import numpy as np
 import jax.numpy as jnp

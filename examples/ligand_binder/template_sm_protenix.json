@@ -1,0 +1,19 @@
+[{
+    "sequences": [
+        {
+            "proteinChain": {
+                "sequence": "AVTTLTPEQRAFVLARLAEVRKTRGVPVAVLGRGEAAVREALRLRRDYGFDVALVGITDPAARALAREHGLPLLTGADHTPEEIAAVIAALRAGGVPVLDDETVDELLARIYNAYLQIDALRAQWAAGTFPGGTEAALQAAIDAIRRAAGIPVTAAVPAGNDALAAFLRALGFEDIEVLP",
+                "count": 1
+            }
+        },
+        {
+            "ligand": {
+                "ligand": "C1[C@@H]2[C@H]([C@H]([C@@H](O2)N3C=NC4=C(N=CN=C43)N)O)OP(=O)(O1)O",
+                "count": 1
+            }
+        }
+    ],
+    "name": "atp"
+}
+]
+

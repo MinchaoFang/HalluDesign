@@ -388,7 +388,7 @@ def thread_seq( pose, seq, masked_positions ):
 # rosetta movers and score function
 #xml = "/home/caolx/DeepLearning/mpnn/bakerlab_scripts/predictor_nodesign.xml"
 xml = "/home/caolongxingLab/caolongxing/DeepLearning/mpnn/bakerlab_scripts/LIG_fastdesign.xml"
-objs = protocols.rosetta_scripts.XmlObjects.create_from_file( xml )
+objs = protocols.rosetta_local_scripts.XmlObjects.create_from_file( xml )
 # Load the movers we will need
 #if True:
 #    pack_monomer = objs.get_mover( 'pack_monomer' )

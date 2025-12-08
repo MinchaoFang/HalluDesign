@@ -2,13 +2,13 @@ import os
 import subprocess
 from typing import Dict, List, Tuple
 import sys
-from scripts.input_pkl_preprocess import process_single_file
+from local_scripts.input_pkl_preprocess import process_single_file
 from eval.eval_utility import get_random_seeds,PeptideSynthesizer,get_gpu_memory
 from data.op_utility import most_central_residue_resseq
 import copy
 import os
 import warnings
-#import scripts.pose_sequence 
+#import local_scripts.pose_sequence 
 from Bio import PDB
 from data.utility import *
 warnings.filterwarnings("ignore", category=PDB.PDBExceptions.PDBConstructionWarning)
