@@ -15,12 +15,10 @@ from typing import Final, Protocol, Self, TypeVar, overload
 from absl import app
 from absl import flags
 import sys
-
 import os
 #current_folder = os.path.dirname(os.path.abspath(__file__))
 #src_folder = os.path.join(current_folder, 'src')
 #sys.path.insert(0, src_folder)
-
 import numpy as np
 import jax.numpy as jnp
 from typing import Dict, Tuple, List, Optional

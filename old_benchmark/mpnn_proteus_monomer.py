@@ -80,13 +80,13 @@ def self_consistency_init(alpahfold,num_seqs):
         }
     mpnn_config_dict = OmegaConf.create(mpnn_config_dict)
     mpnn_model = model_init(mpnn_config_dict, device='cuda')
-    cfg = OmegaConf.load('/storage/caolongxingLab/fangminchao/Proteus/Proteus_flow_matching/configs/inference.yaml')
+    cfg = OmegaConf.load('./Proteus_flow_matching/configs/inference.yaml')
     af2_configs = cfg.inference.self_consistency.structure_prediction.alphafold
     af2_setting = {
         "models": [3] ,
         "num_recycles": af2_configs.num_recycles,
         'prefix': 'monomer',
-        'params_dir': f'/storage/caolongxingLab/fangminchao/Proteus/Proteus_flow_matching/{cfg.inference.self_consistency.structure_prediction.alphafold.params_dir}'
+        'params_dir': f'./Proteus_flow_matching/{cfg.inference.self_consistency.structure_prediction.alphafold.params_dir}'
     }
     if alpahfold:
         prediction_model = mk_af_model(
@@ -245,12 +245,12 @@ def self_consistency(scaffold_path,output_path_tag, mpnn_model, mpnn_config_dict
 import subprocess
 
 def run_proteus_partial(file_path: str, output_dir: str,ref_time_steps: str,) -> bool:
-    """ RFD partial diffusion"""
+    """ proteus partial diffusion"""
 
     parser = PDBParser()
     structure = parser.get_structure('PDB_structure', file_path)
     
-    # lens for RFD
+    # lens for proteus
     residues = [residue for residue in structure.get_residues() if residue.get_id()[0] == ' ']
     length = len(residues)
 
@@ -287,7 +287,7 @@ def run_proteus_partial(file_path: str, output_dir: str,ref_time_steps: str,) ->
     #    print("out of time")
     #    return False
     #except Exception as e:
-    #    print(f"RFD error: {str(e)}")
+    #    print(f"proteus error: {str(e)}")
     #    return False
     #    # Run the command
         result = subprocess.run(
@@ -345,8 +345,8 @@ def process_single_pdb(pdb_file: str,
         'AF2_RMSD': np.nan,
         'AF2_pLDDT': np.nan,
         'AF2_Results' : [],
-        'RFD_RMSD' : np.nan,
-        'RFD_Status' : 'Not run'
+        'proteus_RMSD' : np.nan,
+        'proteus_Status' : 'Not run'
     }
     
     try:
@@ -404,17 +404,17 @@ def process_single_pdb(pdb_file: str,
         success = run_proteus_partial(copied_file, target_dir, ref_time_steps=str(ref_time_steps))
         
         if success:
-            metrics['RFD_Status'] = 'success'
+            metrics['proteus_Status'] = 'success'
             file_name = os.path.splitext(os.path.basename(copied_file))[0]
             # convert cif to pdb
             pdb_output = os.path.join(target_dir, file_name ,"scaffold", file_name)+"_sample_0_scaffold.pdb"
             print(copied_file, pdb_output)
-            metrics['RFD_RMSD'] = calculate_ca_rmsd(copied_file, pdb_output)
-            print(metrics['RFD_RMSD'])
+            metrics['proteus_RMSD'] = calculate_ca_rmsd(copied_file, pdb_output)
+            print(metrics['proteus_RMSD'])
             return metrics, pdb_output
         else:
-            print("RFD processing failed, continuing with the original file.")
-            metrics['RFD_Status'] = 'Failed'
+            print("proteus processing failed, continuing with the original file.")
+            metrics['proteus_Status'] = 'Failed'
             return metrics, copied_file
             
     except Exception as e:
@@ -467,9 +467,9 @@ def main():
                 current_input = next_input 
                 
                 print(f"  Cycle {cycle+1} completed:")
-                print(f"    AF2 RMSD: {metrics['AF2_RMSD']:.3f}")
-                print(f"    AF2 pLDDT: {metrics['AF2_pLDDT']:.3f}")
-                print(f"    RFD Status: {metrics['RFD_Status']}")
+                print(f"  AF2 RMSD: {metrics['AF2_RMSD']:.3f}")
+                print(f"  AF2 pLDDT: {metrics['AF2_pLDDT']:.3f}")
+                print(f"  proteus Status: {metrics['proteus_Status']}")
 
                 with lock:
                     file_exists = os.path.exists(csv_path)

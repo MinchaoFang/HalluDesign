@@ -1,12 +1,14 @@
 from Bio.PDB import MMCIFParser, PDBParser, PDBIO
 from Bio.PDB.MMCIF2Dict import MMCIF2Dict
 import numpy as np
-
-from Bio.PDB import PDBParser, PDBIO, Residue, Atom
-
 import random
-from Bio.PDB import Structure, Model, Chain, Residue
-import numpy as np
+from Bio.PDB import PDBParser, PDBIO, Residue, Atom
+from Bio.PDB.Polypeptide import PPBuilder, three_to_one
+import warnings
+import os
+from Bio.PDB import Structure, Model, Chain
+
+
 def read_protein_info_from_copied_file(copied_file):
     parser = PDBParser()
     structure = parser.get_structure("protein", copied_file)
@@ -22,11 +24,6 @@ def read_protein_info_from_copied_file(copied_file):
 
                 protein_info[chain_id].append(residue)
     return protein_info
-
-from Bio.PDB import PDBParser, MMCIFParser
-from Bio.PDB.Polypeptide import PPBuilder, three_to_one
-import warnings
-import os
 
 # Suppress warnings that Biopython might issue during parsing
 warnings.filterwarnings('ignore', category=UserWarning, module='Bio.PDB')
@@ -209,13 +206,6 @@ def residue_to_str(res_id):
 
     return f"{resnum}{insert if insert != ' ' else ''}"
 
-
-from Bio.PDB import PDBParser, MMCIFParser
-
-from Bio.PDB.MMCIF2Dict import MMCIF2Dict
-
-import numpy as np
-
 def parse_cif(cif_path):
     mmcif_dict = MMCIF2Dict(cif_path)
     
@@ -253,131 +243,6 @@ def parse_pdb(pdb_path):
                     res_seq_ids.append(residue.get_id()[1])  
 
     return atom_names, chain_ids, x_coords, y_coords, z_coords, res_seq_ids
-
-
-from rdkit import Chem
-from rdkit.Chem import AllChem, rdMolDescriptors
-
-def smiles_to_mmcif(smiles, molecule_id='MY-X7F', molecule_name='5,8-bis(oxidanyl)naphthalene-1,4-dione'):
-    # Convert SMILES to RDKit molecule
-    mol = Chem.MolFromSmiles(smiles)
-    if mol is None:
-        raise ValueError("Invalid SMILES string.")
-    # Remove hydrogens
-    mol = Chem.RemoveHs(mol)
-    # Generate 3D coordinates
-    AllChem.EmbedMolecule(mol)
-    AllChem.UFFOptimizeMolecule(mol)
-    # Calculate formula and formula weight
-    formula = rdMolDescriptors.CalcMolFormula(mol)
-    formula_weight = rdMolDescriptors.CalcExactMolWt(mol)
-    # Generate InChI and InChIKey
-    inchi = Chem.MolToInchi(mol)
-    inchi_key = Chem.InchiToInchiKey(inchi)
-    
-    # Prepare mmCIF content
-    mmcif_lines = [
-        f"data_{molecule_id}",
-        "#",
-        f"_chem_comp.id {molecule_id}",
-        f"_chem_comp.name '{molecule_name}'",
-        "_chem_comp.type non-polymer",
-        f"_chem_comp.formula '{formula}'",
-        "_chem_comp.mon_nstd_parent_comp_id ?",
-        "_chem_comp.pdbx_synonyms ?",
-        f"_chem_comp.formula_weight {formula_weight:.3f}",
-        "#"
-    ]
-    
-    # Atom information section
-    mmcif_lines.extend([
-        "loop_",
-        "_chem_comp_atom.comp_id",
-        "_chem_comp_atom.atom_id",
-        "_chem_comp_atom.type_symbol",
-        "_chem_comp_atom.charge",
-        "_chem_comp_atom.pdbx_leaving_atom_flag",
-        "_chem_comp_atom.pdbx_model_Cartn_x_ideal",
-        "_chem_comp_atom.pdbx_model_Cartn_y_ideal",
-        "_chem_comp_atom.pdbx_model_Cartn_z_ideal"
-    ])
-    
-    # Atom name mapping
-    atom_names = {}
-    non_h_atoms = [atom for atom in mol.GetAtoms() if atom.GetAtomicNum() != 1]
-   
-    # Create atom names using RDKit-friendly nomenclature
-    for atom in non_h_atoms:
-        symbol = atom.GetSymbol()
-        # Get the atom's index in the original molecule
-        idx = atom.GetIdx()
-        
-        # Generate atom name based on element and its index
-        # Use a format like C1, O2, N3, etc.
-        atom_name = f"{symbol}{idx+1}"
-        atom_names[idx] = atom_name
-    
-    # Add atom coordinates and ideal coordinates
-    conf = mol.GetConformer()
-    for atom in non_h_atoms:
-        idx = atom.GetIdx()
-        atom_id = atom_names[idx]
-        coords = conf.GetAtomPosition(idx)
-        mmcif_lines.append(
-            f"{molecule_id} {atom_id} {atom.GetSymbol()} 0 N {coords.x:.3f} {coords.y:.3f} {coords.z:.3f}"
-        )
-    
-    # Bond information section
-    mmcif_lines.extend([
-        "#",
-        "loop_",
-        "_chem_comp_bond.atom_id_1",
-        "_chem_comp_bond.atom_id_2",
-        "_chem_comp_bond.value_order",
-        "_chem_comp_bond.pdbx_aromatic_flag"
-    ])
-    
-    # Add bond information
-    for bond in mol.GetBonds():
-        # Exclude bonds involving hydrogen atoms
-        if (bond.GetBeginAtom().GetAtomicNum() != 1 and
-            bond.GetEndAtom().GetAtomicNum() != 1):
-            atom1_id = atom_names[bond.GetBeginAtomIdx()]
-            atom2_id = atom_names[bond.GetEndAtomIdx()]
-           
-            # Determine bond order
-            if bond.GetBondType() == Chem.BondType.SINGLE:
-                bond_order = "SING"
-            elif bond.GetBondType() == Chem.BondType.DOUBLE:
-                bond_order = "DOUB"
-            elif bond.GetBondType() == Chem.BondType.TRIPLE:
-                bond_order = "TRIP"
-            else:
-                bond_order = "SING"
-           
-            # Check if bond is aromatic
-            aromatic_flag = "Y" if bond.GetIsAromatic() else "N"
-           
-            mmcif_lines.append(
-                f"{atom1_id} {atom2_id} {bond_order} {aromatic_flag}"
-            )
-    
-    # Descriptor information section
-    mmcif_lines.extend([
-        "#",
-        "loop_",
-        "_pdbx_chem_comp_descriptor.comp_id",
-        "_pdbx_chem_comp_descriptor.type",
-        "_pdbx_chem_comp_descriptor.program",
-        "_pdbx_chem_comp_descriptor.program_version",
-        "_pdbx_chem_comp_descriptor.descriptor",
-        f"{molecule_id} SMILES RDKit 2024 {smiles}",
-        f"{molecule_id} InChI RDKit 2024 {inchi}",
-        f"{molecule_id} InChIKey RDKit 2024 {inchi_key}",
-        "#"
-    ])
-    
-    return '\n'.join(mmcif_lines)
 
 
 def get_residue_centroid(residue):
@@ -423,11 +288,8 @@ def parse_input(input_string):
         parsed_ranges.append((chain_id, start, end))
     return parsed_ranges
 
-def modify_range(start, end, cdr_2, min_length=5, max_extend=5):
-    if cdr_2:
-        operation = "same"
-    else:
-        operation = random.choice(["extend", "same"]) #  "shrink",
+def modify_range(start, end, min_length=5, max_extend=5):
+    operation = random.choice(["extend","shrink", "same"]) #  
     if operation == "extend":
         new_start = start 
 
@@ -568,7 +430,6 @@ def cdr_process(input_string, pdb_file, output_file):
         # find centre of all atom
         start = res_modify_count[chain_id] + start
         end = res_modify_count[chain_id]+ end
-        print(f"Processing chain {chain_id}, range {start}-{end}")
         centroids = []
         residues_to_delete = []
         for res_id in range(start, end + 1):
@@ -596,14 +457,10 @@ def cdr_process(input_string, pdb_file, output_file):
                 structure[0][chain_id].detach_child((' ', res_id, ' '))
             except KeyError:
                 continue
-
-        # random expand or delete
-        if seg_count % 6 == 2:
-            print("cdr_2")
-            cdr_2 = True
-        else:
-            cdr_2 = False
-        new_start, new_end = modify_range(start, end,cdr_2)
+        # NOTE:
+        # A better approach may be to graft traditional but optimal CDR lengths 
+        # with random expansion or deletion or keep same.
+        new_start, new_end = modify_range(start, end)
         print(f"Modified range for chain {chain_id}: {new_start}-{new_end}")
         #new_start = res_modify_count[chain_id] + new_start
         #new_end = res_modify_count[chain_id]+ new_end
@@ -670,7 +527,6 @@ def random_protein_sequence(sequence, keep_positions, chain):
               {chain: mutated_seq}.
     """
 
-    print(sequence, keep_positions, chain)
     amino_acids = list("ACDEFGHIKLMNPQRSTVWY")
     keep_positions = set(keep_positions)  
     mutated = []
@@ -684,9 +540,6 @@ def random_protein_sequence(sequence, keep_positions, chain):
             mutated.append(random.choice(choices))  
 
     return  "".join(mutated)
-
-import random
-from Bio.PDB import PDBParser
 
 def get_random_close_residues(pdb_file, chain_a="A", chain_b="B", cutoff=6.0):
     parser = PDBParser(QUIET=True)

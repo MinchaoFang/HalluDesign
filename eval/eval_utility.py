@@ -13,10 +13,10 @@ def generate_metrics(num_protein,num_small_molecular, num_dna, num_rna,chain_typ
         "eval_path" : None,
         "packed_path" : None ,
         "oringin_path" : None ,
-        "plddt_good_indicates_len" : np.nan ,
+        "fixed_residues_for_MPNN_len" : np.nan ,
         "key_interaction_len": np.nan,
         'op_cif_path' : None ,
-        'AF3_Status': 'Not Run',
+        'HalluDesign_Status': 'Not Run',
         "eval_status" : "Not Run",
         "eval_plddt" : np.nan ,
         "op_plddt" : None , 
@@ -38,7 +38,7 @@ def generate_metrics(num_protein,num_small_molecular, num_dna, num_rna,chain_typ
         'eval_pde': np.nan,
         'eval_ipae': np.nan,
         'eval_ipde': np.nan,
-        "esm_score": np.nan,
+        "CoDP_score": np.nan,
     }
     
     num_chains = num_protein + num_small_molecular + num_dna + num_rna
@@ -229,7 +229,10 @@ def get_gpu_memory():
     except Exception as e:
         print("Error running nvidia-smi:", e)
         return None
-
+# NOTE
+# We attempted to build cyclic peptide structures using SMILES representations
+# instead of amino-acid cyclic positional encoding for evaluation.
+# However, the AF3 confidence scores were much lower.
 class PeptideSynthesizer:
     def __init__(self):
         pass

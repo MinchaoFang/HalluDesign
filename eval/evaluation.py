@@ -13,19 +13,15 @@ from Bio import PDB
 from data.utility import *
 warnings.filterwarnings("ignore", category=PDB.PDBExceptions.PDBConstructionWarning)
 import pandas as pd
-
-
-
 import torch
-
 import numpy as np
-
 try:
     import biotite.structure.io as strucio
     from biotite.structure import AtomArray
     import biotite.structure as struc
 except:
     print("no biotitle")
+
 def read_pdb_to_atom_array(pdb_path: str):
     """
     Reads structure data from a PDB file and returns an AtomArray.
@@ -158,15 +154,13 @@ def self_consistency_protenix(scaffold_path,
                         output_dir,
                         template_path,
                         sm,  
-                        ccd_LG,
-                        ccd_codes,
                         dna,
                         rna,
                         ref_eval,
                         chain_types,
                         pocket_res,
                         fixed_chains,
-                        plddt_good_indicates,
+                        fixed_residues_for_MPNN,
                         cyclic,
                         metrics,
                         random_init= False):
@@ -211,8 +205,6 @@ def self_consistency_protenix(scaffold_path,
                 input_json[0]['sequences'][count]["rnaSequence"]["sequence"] = rna[sm_count]
                 rna_count +=1
             count += 1
-        if ccd_LG:
-            input_json['userCCD']=ccd_LG
         # Write the new JSON file
         with open(json_path, 'w') as f:
             json.dump(input_json, f, indent=2)
@@ -220,7 +212,7 @@ def self_consistency_protenix(scaffold_path,
         base_name = os.path.basename(scaffold_path)
        
         if ref_eval:
-            print("normal AF3 batch diffusion plus ref guided diffusion")
+            print("ref guided confidence evaluation")
             
             ref_out_dir = os.path.join(output_dir, "packed")
             # Run AF3
@@ -228,27 +220,20 @@ def self_consistency_protenix(scaffold_path,
             atom_array = read_pdb_to_atom_array(packed)
             pred_coordinates_tensor = extract_coordinates(atom_array, as_tensor=True)
             torch.save(pred_coordinates_tensor,pkl_path)
-            prediction=AF3Designer_model.predict(
+            results_eval=AF3Designer_model.predict(
             input_json_path=json_path,
             dump_dir=output_dir,
             seed=123,
-            #input_atom_array_path="/storage/caolongxingLab/fangminchao/software/Protenix/coord_pdb.pkl",
-            #diffusion_steps = 50
+            input_atom_array_path=pkl_path,
+            ref_time_steps =0
         )
         else:
             results_eval=AF3Designer_model.predict(
             input_json_path=json_path,
             dump_dir=output_dir,
-            seed=123,
-            #input_atom_array_path="/storage/caolongxingLab/fangminchao/software/Protenix/coord_pdb.pkl",
-            #diffusion_steps = 50
+            seed=123
         )
-        #print(output_dir)
-        #print(results_eval)
-        #import pickle
 
-        #with open('/storage/caolab/fangmc/code/AF3Designer/results.pkl', 'wb') as f:
-        #    pickle.dump(results_eval, f)
         max_ranking_score = 0
         for _ in range(len(results_eval['summary_confidence'])):
             ranking_score = results_eval['summary_confidence'][_]["ranking_score"]
@@ -258,7 +243,6 @@ def self_consistency_protenix(scaffold_path,
                 max_ranking_score = ranking_score
 
         #print(max_ranking_result.metadata.keys())
-        #print(max_ranking_result.numerical_data.keys())
 
         dict_result ={}
     
@@ -285,8 +269,8 @@ def self_consistency_protenix(scaffold_path,
         metric["eval_path"] = cif_path
         metric['prediction_model'] = "AF3"
         metric['eval_plddt'] = calculate_average_b_factor(cif_path,[f"{_}" for _ in chain_labels])
-        if plddt_good_indicates:
-            metric['eval_plddt_fix'] ,metric['eval_plddt_redes'] = calculate_bfactor_averages_from_list(cif_path,plddt_good_indicates)
+        if fixed_residues_for_MPNN:
+            metric['eval_plddt_fix'] ,metric['eval_plddt_redes'] = calculate_bfactor_averages_from_list(cif_path,fixed_residues_for_MPNN)
         chain_pair_iptm = dict_result['chain_pair_iptm']
         chain_pair_pae = dict_result["chain_pair_pae_min"]
         metric['eval_iptm'] = dict_result['iptm'].mean().item()
@@ -369,7 +353,6 @@ def self_consistency_af3(scaffold_path,
                         output_dir,
                         template_path,
                         sm,  
-                        ccd_LG,
                         ccd_codes,
                         dna,
                         rna,
@@ -377,7 +360,7 @@ def self_consistency_af3(scaffold_path,
                         chain_types,
                         pocket_res,
                         fixed_chains,
-                        plddt_good_indicates,
+                        fixed_residues_for_MPNN,
                         cyclic,
                         replace_MSA,
                         metrics):
@@ -424,8 +407,6 @@ def self_consistency_af3(scaffold_path,
                     rna_count +=1
                 count += 1
 
-            if ccd_LG:
-                input_json['userCCD']=ccd_LG
         # Write the new JSON file
         if replace_MSA:
             #msa=f'>query\n{input_json["sequences"][chain]["protein"]["sequence"]}\n'
@@ -540,8 +521,8 @@ def self_consistency_af3(scaffold_path,
         metric["eval_path"] = cif_path
         metric['prediction_model'] = "AF3"
         metric['eval_plddt'] = calculate_average_b_factor(cif_path,[f"{_}" for _ in chain_labels])
-        if plddt_good_indicates:
-            metric['eval_plddt_fix'] ,metric['eval_plddt_redes'] = calculate_bfactor_averages_from_list(cif_path,plddt_good_indicates)
+        if fixed_residues_for_MPNN:
+            metric['eval_plddt_fix'] ,metric['eval_plddt_redes'] = calculate_bfactor_averages_from_list(cif_path,fixed_residues_for_MPNN)
         chain_pair_iptm = dict_result['chain_pair_iptm']
         chain_pair_pae = dict_result["chain_pair_pae_min"]
         metric['eval_iptm'] = dict_result['iptm']
@@ -626,48 +607,10 @@ def self_consistency_af3(scaffold_path,
     metrics_to_tile.sort(key=lambda x: x['eval_plddt'])
     return metrics_to_tile
 
-import subprocess
-def protenix_eval(input_json_path,dump_dir,seed,diffusion_steps,use_esm):
-    command_string = (
-        f"~/mambaforge/envs/protenix/bin/python /storage/caolongxingLab/fangminchao/AF3_design/AF3Designer/protenix_init.py "
-        f"--input_json_path {input_json_path} "
-        f"--dump_dir {dump_dir} "
-        f"--seed {seed} " # seed and diffusion_steps are ints, no need to quote if they are simple numbers
-        f"--diffusion_steps {diffusion_steps}"
-    )
-    if use_esm:
-        command_string += " --use_esm"
-
-    print(f"Running command: {command_string}")
-
-    try:
-        result = subprocess.run(
-            command_string,
-            shell=True, # VERY IMPORTANT for running as a single string
-            capture_output=True,
-            text=True,
-            check=True
-        )
-        print("STDOUT:\n", result.stdout)
-        if result.stderr:
-            print("STDERR:\n", result.stderr)
-
-    except subprocess.CalledProcessError as e:
-        print(f"Command failed with exit code {e.returncode}")
-        print("STDOUT:\n", e.stdout)
-        print("STDERR:\n", e.stderr)
-    except FileNotFoundError:
-        print(f"Error: Shell or command not found.")
-    except Exception as e:
-        print(f"An unexpected error occurred: {e}")
-
-
-
-
 def run_mpnn_evaluation(scaffold_path,
                         mpnn_model,
                         mpnn_config_dict,
-                        plddt_good_indicates,
+                        fixed_residues_for_MPNN,
                         pocket_res,
                         output_dir,
                         symmetry_residues,
@@ -676,13 +619,13 @@ def run_mpnn_evaluation(scaffold_path,
                         cycle,
                         evaluator= None,
                         bais_per_residues=None):  
-    #pocket_plddt_good_res = common_elements(pocket_res ,plddt_good_indicates)
+    #pocket_plddt_good_res = common_elements(pocket_res ,fixed_residues_for_MPNN)
     #pocket_plddt_good_res_set = set(pocket_plddt_good_res)
-    pocket_res_to_fix = [item for item in plddt_good_indicates]
-    non_pocket_to_fix =  list(set(plddt_good_indicates + pocket_res)) 
+    pocket_res_to_fix = [item for item in fixed_residues_for_MPNN]
+    non_pocket_to_fix =  list(set(fixed_residues_for_MPNN + pocket_res)) 
     pocket_res_to_fix = " ".join([f"{resi}" for  resi in pocket_res_to_fix]) 
     non_pocket_to_fix = " ".join([f"{resi}" for  resi in non_pocket_to_fix]) 
-    print("plddt_good_indicates",plddt_good_indicates)
+    print("fixed_residues_for_MPNN",fixed_residues_for_MPNN)
     print("pocket_res",pocket_res)
     print("pocket_res_to_fix",pocket_res_to_fix)
     print("non_pocket_to_fix",non_pocket_to_fix)
@@ -692,6 +635,7 @@ def run_mpnn_evaluation(scaffold_path,
     weights = calculate_weights(residue_groups)
     weights_str = '|'.join([','.join([str(weight)] * len(group)) for weight, group in zip(weights, residue_groups)])
     bias_AA = ""
+    # We apply a hydrophilicity bias for cyclic peptide design.
     if cyclic:
         bias_AA = "D:0.5,E:0.5,H:0.5,K:0.5,R:0.5,W:-0.5,L:-0.5,I:-0.5,F:-0.5,M:-0.5,V:-0.5,Y:-0.5"
 
@@ -703,13 +647,15 @@ def run_mpnn_evaluation(scaffold_path,
         sequences,packed_paths=run_Ligandmpnn_plus_proteinmpnn_evaluation(mpnn_model,scaffold_path,mpnn_config_dict,pocket_res_to_fix,non_pocket_to_fix,interact_fix_analyzer,weights_str,output_dir,symmetry_residues)
     else: 
         sequences,packed_paths=run_purempnn_evaluation(mpnn_model,scaffold_path,mpnn_config_dict,pocket_res_to_fix,weights_str,output_dir,bias_AA,symmetry_residues,bais_per_residues)
+    
+    # NOTE:
+    # We also tested physics-based scoring models such as PLIP and PyRosetta,
+    # but none of them performed better for ligand binder design.
+    # Therefore, the related code has been removed.
 
     if isinstance(evaluator, CoDP):
         mpnn_config_dict["num_seqs"] = int(mpnn_config_dict["num_seqs"] /8)
         num_seqs = int(mpnn_config_dict["num_seqs"])
-        #scores = evaluator.predict(sequences, scaffold_path)
-        #interaction_data = [(seq, packed, 0, 0, 0, score) for seq, packed, score in zip(sequences, packed_paths, scores)]
-        #original_length_sequences = sorted(interaction_data, key=lambda x: -x[5])[:num_seqs]
         batchsizes = [ 8, 4, 2]
         last_error = None
 
@@ -727,18 +673,18 @@ def run_mpnn_evaluation(scaffold_path,
             print("❌ All batchsizes failed. Raising last error.")
             raise last_error
     else:
-        original_length_sequences = [(seq, packed, 0, 0, 0, 0) for seq, packed in zip(sequences, packed_paths)]
+        original_length_sequences = [(seq, packed, 0) for seq, packed in zip(sequences, packed_paths)]
 
     metrics_to_tile = []
     metrics_to_copy = copy.deepcopy(metrics)
 
-    for seq, packed, plip_score, pi_stacking_score, oxygen_score, score in original_length_sequences:
+    for seq, packed, score in original_length_sequences:
         metrics = copy.deepcopy(metrics_to_copy)
         metrics["mpnn_model"] = mpnn_config_dict["model_name"]
         metrics["packed_path"] = packed
         metrics['mpnn_sequence'] = seq
         metrics["eval_status"] = "Not run"
-        metrics['esm_score'] = score
+        metrics['CoDP_score'] = score
         metrics_to_tile.append(metrics)
     return metrics_to_tile
 
@@ -795,12 +741,8 @@ def run_selection_process(sequences, packed_paths, evaluator, scaffold_path, num
             batch_packed_paths = [item[1] for item in current_data[i : i + batch_size]]
             # Call the evaluator for prediction
             # Note: evaluator.predict should return scores corresponding to the order of batch_sequences
-            #print_cuda_memory_usage()
-            #torch.cuda.empty_cache()
-            #print_cuda_memory_usage()
             batch_scores = evaluator.predict(batch_sequences, scaffold_path)
-            #print_cuda_memory_usage()
-            #torch.cuda.empty_cache()
+
             # Bind scores with original sequences and paths
             for j, (seq, packed) in enumerate(zip(batch_sequences, batch_packed_paths)):
                 all_scores_for_round.append((seq, packed, batch_scores[j]))
@@ -841,7 +783,7 @@ def run_selection_process(sequences, packed_paths, evaluator, scaffold_path, num
                 final_score = item[2]
                 break
         
-        final_results.append((seq, packed, 0, 0, 0, final_score))
+        final_results.append((seq, packed, final_score))
     # The final results still need to be sorted by score in descending order (even if they were already sorted in the loop)
     final_results.sort(key=lambda x: -x[5])
     
@@ -936,40 +878,54 @@ def process_confidence_metrics_protenix(results_op, cif_path: str, copied_file :
                 max_ranking = _
                 max_ranking_score = ranking_score
         #print(max_ranking)
-        #print(max_ranking_result.metadata.keys())
-        #print(max_ranking_result.numerical_data.keys())
 
         dict_result ={}
-    
-        dict_result['ipae'] = None 
-        dict_result['ipde'] = None 
-
         dict_result['iptm'] = results_op['summary_confidence'][max_ranking]['chain_iptm']
-        dict_result['chain_pair_pae_min'] = None
         dict_result['chain_ptm'] = results_op['summary_confidence'][max_ranking]['chain_ptm']
         dict_result['chain_pair_iptm'] = results_op['summary_confidence'][max_ranking]['chain_pair_iptm']
         dict_result['ranking_confidence'] = results_op['summary_confidence'][max_ranking]["ranking_score"]
 
+        data = results_op["full_data"][max_ranking]
+
+        # 转为 NumPy 数组
+        pae = np.array(data["token_pair_pae"])   # shape: (n_tokens, n_tokens)
+        pde = np.array(data["token_pair_pde"])   # shape: (n_tokens, n_tokens)
+        chain_ids = np.array(data["token_asym_id"])  # 每个 token 的链 ID
+        n_tokens = len(chain_ids)
+
+        global_pae = pae.mean()
+        global_pde = pde.mean()
+
+        # 2. global interface (definition-correct)
+        interface_mask = chain_ids[:, None] != chain_ids[None, :]
+        global_ipae = pae[interface_mask].mean()
+        global_ipde = pde[interface_mask].mean()
+
+        # 3. chain-pair iPAE / iPDE
+        chain_pair_ipae = {}
+        chain_pair_ipde = {}
+        unique_chains = np.unique(chain_ids)
+        for c1 in unique_chains:
+            for c2 in unique_chains:
+                if c1 == c2:
+                    continue
+                mask = np.outer(chain_ids==c1, chain_ids==c2)
+                chain_pair_ipae[(c1, c2)] = pae[mask].mean()
+                chain_pair_ipde[(c1, c2)] = pde[mask].mean()
         #print(dict_result)
-        
-        #confidence_json_path = os.path.join(output_dir,tag,f"{tag}_summary_confidences.json")
-        #with open(confidence_json_path, 'r') as f:
-        #    confidence_json = json.load(f)
         metrics ={}
         metrics['op_cif_path'] = cif_path
         [count,protein_count,sm_count,rna_count,dna_count] =count_tuple 
         chain_labels = string.ascii_uppercase[:count]  # Generate labels A, B, C...
-        metrics["AF3_Status"] = "success"
-        metrics['op_plddt'] = calculate_average_b_factor(cif_path,[f"{_}" for _ in chain_labels])
+        metrics["HalluDesign_Status"] = "Protenix_success"
+
         chain_pair_iptm = dict_result['chain_pair_iptm']
-        chain_pair_pae = dict_result['chain_pair_pae_min']
         metrics['op_iptm'] = dict_result['iptm'].mean().item()
         metrics['op_ptm'] = dict_result['chain_ptm'].mean().item()
-        metrics['op_pae'] = None
-        metrics['op_pde'] = None
-        metrics['op_ipae'] = dict_result['ipae'] 
-        metrics['op_ipde'] = dict_result['ipde'] 
-        metrics["AF3_Status"] = "success"
+        metrics['op_pae'] = global_pae
+        metrics['op_pde'] = global_pde
+        metrics['op_ipae'] = global_ipae
+        metrics['op_ipde'] = global_ipde
         metrics['op_plddt'] = calculate_average_b_factor(cif_path,[f"{_}" for _ in chain_labels])
         
         for i in range(0,count):
@@ -1018,18 +974,22 @@ def process_confidence_metrics_protenix(results_op, cif_path: str, copied_file :
             for i in protein_indices:
                 for j in other_indices:
                     all_iptm_to_protein.append(chain_pair_iptm[i][j])
-
                     all_iptm_to_protein.append(chain_pair_iptm[j][i])
+                    all_ipae_to_protein.append(chain_pair_ipae[(i, j)])
+                    all_ipae_to_protein.append(chain_pair_ipae[(j, i)])
 
             all_iptm_to_protein = [x for x in all_iptm_to_protein if x is not None]
+            all_ipae_to_protein = [x for x in all_ipae_to_protein if x is not None]
 
             if all_iptm_to_protein:
                 metrics[f'eval_all_iptm_to_protein'] = (sum(all_iptm_to_protein) / len(all_iptm_to_protein)).item()
             else:
                 metrics[f'eval_all_iptm_to_protein'] = 0
-                
-            metrics[f'eval_all_ipae_to_protein'] = 0
-            
+
+            if all_ipae_to_protein:
+                metrics[f'eval_all_ipae_to_protein'] = (sum(all_ipae_to_protein) / len(all_ipae_to_protein)).item()
+            else:
+                metrics[f'eval_all_ipae_to_protein'] = 0
             for j in other_indices:
                 label = chain_labels[j]
                 cross_values_iptm = []
@@ -1037,11 +997,15 @@ def process_confidence_metrics_protenix(results_op, cif_path: str, copied_file :
                 for i in protein_indices:
                     cross_values_iptm.append(chain_pair_iptm[i][j])
                     cross_values_iptm.append(chain_pair_iptm[j][i])
+                    cross_values_ipae.append(chain_pair_ipae[(i, j)])
+                    cross_values_ipae.append(chain_pair_ipae[(j, i)])
 
                 cross_values_iptm = [x for x in cross_values_iptm if x is not None]
+                cross_values_ipae = [x for x in cross_values_ipae if x is not None]
                 average_iptm = sum(cross_values_iptm) / len(cross_values_iptm) if cross_values_iptm else 0
+                average_ipae = sum(cross_values_ipae) / len(cross_values_ipae) if cross_values_ipae else 0
                 metrics[f'eval_{label}_iptm'] = average_iptm.item()
-                metrics[f'eval_{label}_ipae'] = None
+                metrics[f'eval_{label}_ipae'] = average_ipae
 
         for _ in metrics_tile:
             _.update(metrics)
@@ -1051,7 +1015,7 @@ def process_confidence_metrics_protenix(results_op, cif_path: str, copied_file :
         print(f"Failed to process AF3 metrics: {str(e)}")
         return metrics
 
-def process_confidence_metrics(results_op, cif_path: str, copied_file : str,scaffold_path, metrics_tile,pocket_res,chain_types,fixed_chains,count_tuple) -> Dict:
+def process_confidence_metrics_af3(results_op, cif_path: str, copied_file : str,scaffold_path, metrics_tile,pocket_res,chain_types,fixed_chains,count_tuple) -> Dict:
     """Process confidence metrics output by AF3"""
     try:
         
@@ -1102,7 +1066,7 @@ def process_confidence_metrics(results_op, cif_path: str, copied_file : str,scaf
         metrics['op_cif_path'] = cif_path
         [count,protein_count,sm_count,rna_count,dna_count] =count_tuple 
         chain_labels = string.ascii_uppercase[:count]  # Generate labels A, B, C...
-        metrics["AF3_Status"] = "success"
+        metrics["HalluDesign_Status"] = "AF3_success"
         metrics['op_plddt'] = calculate_average_b_factor(cif_path,[f"{_}" for _ in chain_labels])
         chain_pair_iptm = dict_result['chain_pair_iptm']
         chain_pair_pae = dict_result['chain_pair_pae_min']
@@ -1483,9 +1447,6 @@ class ContactModel(nn.Module):
             
             pair_stack = torch.cat([true_contact, bin_probs], dim=3)
             #print(f"pair_stack shape: {pair_stack.shape}")
-            #print(f"hidden_states_projection shape: {hidden_states_projection.shape}")
-            #pair_stack = self.con_pair(pair_stack.permute(0,3,1,2))
-            #print(f"pair_stack shape: {pair_stack.shape}")
             single_stack = self.cross_projection_pair_1(hidden_states_projection, pair_stack)
             single_stack = self.cross_projection_pair_2(single_stack, pair_stack.permute(0,2,1,3))
             del hidden_states_projection,pair_stack
@@ -1524,13 +1485,9 @@ class ContactModel(nn.Module):
                 interaction_pair_1 = features_pair_1 - features_pair_2 
                 interaction_pair_2 = features_pair_2 - features_pair_1 
                 interaction_pair = torch.cat([interaction_pair_1, interaction_pair_2], dim=0)  
-                #print(f"Interaction pair shape: {interaction_pair.shape}")
                 contrastive_output = self.self_attention_projection_extract_cls(interaction_pair)
-                #print(f"Contrastive output shape: {contrastive_output.shape}")
                 contrastive_output = self.self_attention_projection(contrastive_output)
-                #print(f"Contrastive output shape: {contrastive_output.shape}")
                 contrastive_output = F.sigmoid(contrastive_output)
-                #print(f"Contrastive output shape: {contrastive_output.shape}")
             return contrastive_output
         #print(f"Contrastive output shape: {contrastive_output.shape}")
         else:

@@ -22,12 +22,8 @@ import copy
 import shutil
 from data.utility import *
 from eval.evaluation import  CoDP
-
-from eval.eval_utility import get_random_seeds,generate_metrics,get_global_residue_index
+from eval.eval_utility import generate_metrics
 from LigandMPNN.package import MPNNModel
-
-import subprocess
-import math
 from copy import deepcopy
 import csv
 import torch
@@ -47,13 +43,13 @@ def parse_arguments():
     parser.add_argument('--input_file', type=str, required=False,
                        help='input file path')
     parser.add_argument('--fix_res_index', type=str, required=False, 
-                        help='Fixed residue indices, e.g. A1 B4 but be careful, we will reindex all to begin with 1')
+                        help='Fixed residue indices, e.g. A1 B4 but be careful, you should reindex all chain to begin with 1')
     parser.add_argument('--fix_chain_index', type=str, required=False,
                         help='Fixed chain indices, e.g. A B')
     parser.add_argument('--output_dir', type=str, required=True,
                        help='Directory for output files')
     parser.add_argument('--num_seqs', type=int, default=8,
-                       help='Number of proteinMPNN or LigadnMPNN+proteinMPNN seqs to perform self consistency')
+                       help='Number of proteinMPNN or LigadnMPNN seqs to perform self consistency')
     parser.add_argument('--num_recycles', type=int, default=10,
                        help='toatl Number of recycles to perform')
     parser.add_argument('--ref_time_steps', type=int, default=50,
@@ -61,9 +57,9 @@ def parse_arguments():
     parser.add_argument('--cdr',  type=str,  required=False,
                     help='cdr input to refine antibody,should use in antibody')
     parser.add_argument('--fix_seq_file',  type=str,  required=False,
-                    help='fix seq csv which contains file_path and fix res index')
+                    help='fix seq csv which contains file_path and fix res index, you can also provide bias column to do bias seqeunce design')
     parser.add_argument('--framework_seq',  type=str, nargs='+', required=False, default=[],
-                    help='framework seq input to refine antibody,sequence defined in this will be fixed')
+                    help='framework seq input to refine antibody, sequence defined in this will be fixed')
     parser.add_argument('--num_samples', type=int, default=1,
                        help='AF3 optimizer batchsize')
     parser.add_argument('--num_seeds', type=int, default=1,
@@ -78,30 +74,30 @@ def parse_arguments():
                        help='Path to AF3 template.json file, it should be really careful to treat with')
     parser.add_argument('--template_for_eval', type=str, required=False, 
                        help='Path to AF3 template.json file only for eval')
-    parser.add_argument('--prediction_model', type=str,  required=True,
+    parser.add_argument('--HalluDesign_model', type=str,  required=True,
                        help='af3 or Protenix')
     parser.add_argument('--ref_eval', action='store_true', default=False,
-                    help='whether to use small molecular ref position in AF3 evaluation, which means direct send atom positions to AF3, only use it confidence head')
+                    help='whether to use ref position in AF3 evaluation, which means direct send atom positions to AF3, only use it confidence head')
     parser.add_argument('--CoDP', action='store_true', default=False,
                     help='whether to use CoDP to validate sequence quality')
     parser.add_argument('--fake_msa', type=int,  default=None,
-                       help='whether to use how many ProteinMPNN (for pure protien system) or LigandMPNN (for protien and ligand system) seqs to fake MSA')
+                       help='whether to use how many ProteinMPNN (for pure protien system) or LigandMPNN (for protien and ligand system) seqs per cif structure to fake MSA')
     parser.add_argument('--sm', type=str, nargs='+', required=False, default=[],
-                    help='smiles input,it needs a good structure mapping smilles')
+                    help='smiles input, it needs a good structure mapping smille')
     parser.add_argument('--mpnn',  type=str,  required=False,
-                    help='which mpnn model do you choose proteinmpnn ligandmpnn ligandmpnn_plus_proteinmpnn')
+                    help='which mpnn model do you choose proteinmpnn, ligandmpnn or ligandmpnn_plus_proteinmpnn (ligandmpnn for ligand binding part and proteinmpnn for protein part)')
     parser.add_argument('--mpnn_temperature', type=float, default=0.1,
                        help='mpnn temperature to use')
     parser.add_argument('--replace_MSA', action='store_true', default=False,
-                       help='framework to use MSA, used in antibody design')
+                       help='framework to use MSA, used in antibody or nanobody design')
     parser.add_argument('--ccd', type=str, nargs='+', required=False, default=[],
-                    help='ccd input,it needs a good structure mapping ccd')
+                    help='ccd input,it needs a good structure mapping ccd for AF3')
     parser.add_argument('--dna', type=str, nargs='+', required=False, default=[],
                     help='dna input')
     parser.add_argument('--rna', type=str, nargs='+', required=False, default=[],
                     help='rna input')
     parser.add_argument('--design_epoch_begin', type=int, required=False,  default=0,
-                    help='in which cycles, multi batch evaluation process will begin')
+                    help='in which cycles, multi seqs evaluation process will begin')
     parser.add_argument("--symmetry_residues",type=str,default="",
                     help="Add list of res for which residues need to be symmetric, e.g. 'A12,A13,A14|C2,C3|A5,B6'")
     parser.add_argument("--symmetry_chains",type=str,default="",
@@ -195,7 +191,7 @@ def main():
                          repack_everything=1)
     mpnn_config_dict = {
         "temperature": args.mpnn_temperature,
-        "model_name": args.mpnn, #"ligandmpnn_plus_proteinmpnn"
+        "model_name": args.mpnn, 
         "num_seqs": 1
         }
     print(f"{args.mpnn} will be use in sequnce design")
@@ -214,12 +210,12 @@ def main():
     else:
         fixed_chains = []
 
-    if args.prediction_model  == "af3":
+    if args.HalluDesign_model  == "af3":
         from af3_model import AF3DesignerPack
         Designer_model = AF3DesignerPack(jax_compilation_dir=os.path.join(args.output_dir,"jax_compilation_cache_dir"))
-        protein_chains, ligand_chains, dna_chains, rna_chains, chain_types =  count_chain_based_on_json(args.template_path)
+        protein_chains, ligand_chains, dna_chains, rna_chains, chain_types =  count_chain_based_on_json_af3(args.template_path)
         metrics = generate_metrics(protein_chains,ligand_chains, dna_chains, rna_chains,chain_types)
-    if args.prediction_model  == "protenix":
+    if args.HalluDesign_model  == "protenix":
         #sys.path.insert(0,os.path.join(current_dir,"Protenix"))
         from runner.inference import ProtenixInferrer
         os.environ["LAYERNORM_TYPE"] = "fast_layernorm"
@@ -232,10 +228,12 @@ def main():
         "sample_diffusion.N_step": 200, # Example value
         "use_esm": True,
         "use_msa": False,
+        "need_atom_confidence": True, 
+        "sorted_by_ranking_score": True,
         # Add any other global or model-specific configs here
         # "load_checkpoint_path": "/path/to/your/model_checkpoint.pth", # Ensure this is correct
         # "need_atom_confidence": True, # Or False, depending on your needs
-        # "sorted_by_ranking_score": True, # Or False
+        #  # Or False
         # "dtype": "fp32", # or "bf16", "fp16"
             }
 
@@ -285,7 +283,7 @@ def main():
                     design_begin = True
                 print(f"begin multi-batch evaluation {design_begin}")
                 metrics = copy.deepcopy(metrics_new)
-                if args.prediction_model  == "af3":
+                if args.HalluDesign_model  == "af3":
                     metrics, next_input ,chain_number_list_cdr= af3_op_af3_eval(
                     current_input,
                     cycle,
@@ -302,10 +300,10 @@ def main():
                     args.template_plddt_threshold_length,
                     args.fake_msa,
                     args.ref_eval,
-                     chain_types,
-                     fixed_chains,
-                     fixed_residues,
-                     bais_per_residues,
+                    chain_types,
+                    fixed_chains,
+                    fixed_residues,
+                    bais_per_residues,
                     metrics,
                     args.symmetry_residues,
                     args.symmetry_chains,
@@ -324,7 +322,7 @@ def main():
                     args.ptm,
                     run_af3=not is_last_cycle  #  AF3 not run in last cycle
                 )
-                elif args.prediction_model  == "protenix":
+                elif args.HalluDesign_model  == "protenix":
                     metrics, next_input, chain_number_list_cdr = protenix_op_protenix_eval(
                     pdb_file=current_input,
                     cycle=cycle,
@@ -335,19 +333,15 @@ def main():
                     mpnn_config_dict=mpnn_config_dict,
                     Designer_model=Designer_model,
                     ref_time_steps=args.ref_time_steps,
-                    num_samples=args.num_samples,
-                    num_seeds=args.num_seeds,
                     ref_eval=args.ref_eval,
                     chain_types=chain_types,
                     fixed_chains=fixed_chains,
                     fixed_residues=fixed_residues,
                     bais_per_residues=bais_per_residues,
                     metrics=metrics,
-                    ptm=args.ptm,
                     symmetry_residues=args.symmetry_residues,
                     symmetry_chains=args.symmetry_chains,
                     sm=args.sm,
-                    ccd=args.ccd,
                     dna=args.dna,
                     rna=args.rna,
                     cdr=args.cdr,

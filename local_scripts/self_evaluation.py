@@ -9,7 +9,7 @@ import time
 import dataclasses
 import re
 from functools import partial
-sys.path.append("/storage/caolab/wangct/Project/Proteus_flow_matching")
+sys.path.append("./Proteus_flow_matching")
 #sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir)))
 from omegaconf import OmegaConf
 from data import utils as du

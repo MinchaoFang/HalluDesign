@@ -181,7 +181,7 @@ def sample_diffusion(
         x_l = noise_schedule[0] * torch.randn(
             size=(*batch_shape, chunk_n_sample, N_atom, 3), device=device, dtype=dtype
         )  # NOTE: set seed in distributed training
-        print(f"Initialized x_l with noise. Shape: {x_l.shape}")
+        #print(f"Initialized x_l with noise. Shape: {x_l.shape}")
         start_idx = total_schedule_steps - num_denoise_iterations
         end_idx = total_schedule_steps # For c_tau_last
         if input_atom_array_path:

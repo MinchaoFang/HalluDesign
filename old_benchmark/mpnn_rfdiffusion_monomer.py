@@ -79,13 +79,13 @@ def self_consistency_init(alpahfold,num_seqs):
         }
     mpnn_config_dict = OmegaConf.create(mpnn_config_dict)
     mpnn_model = model_init(mpnn_config_dict, device='cuda')
-    cfg = OmegaConf.load('/storage/caolongxingLab/fangminchao/Proteus/Proteus_flow_matching/configs/inference.yaml')
+    cfg = OmegaConf.load('./Proteus_flow_matching/configs/inference.yaml')
     af2_configs = cfg.inference.self_consistency.structure_prediction.alphafold
     af2_setting = {
         "models": [3] ,
         "num_recycles": af2_configs.num_recycles,
         'prefix': 'monomer',
-        'params_dir': f'/storage/caolongxingLab/fangminchao/Proteus/Proteus_flow_matching/{cfg.inference.self_consistency.structure_prediction.alphafold.params_dir}'
+        'params_dir': f'./Proteus_flow_matching/{cfg.inference.self_consistency.structure_prediction.alphafold.params_dir}'
     }
     if alpahfold:
         prediction_model = mk_af_model(
@@ -460,9 +460,9 @@ def main():
                 current_input = next_input  # update next cycle file
                 
                 print(f"  Cycle {cycle+1} completed:")
-                print(f"    AF2 RMSD: {metrics['AF2_RMSD']:.3f}")
-                print(f"    AF2 pLDDT: {metrics['AF2_pLDDT']:.3f}")
-                print(f"    RFD Status: {metrics['RFD_Status']}")
+                print(f"  AF2 RMSD: {metrics['AF2_RMSD']:.3f}")
+                print(f"  AF2 pLDDT: {metrics['AF2_pLDDT']:.3f}")
+                print(f"  RFD Status: {metrics['RFD_Status']}")
 
                 with lock:
                     file_exists = os.path.exists(csv_path)

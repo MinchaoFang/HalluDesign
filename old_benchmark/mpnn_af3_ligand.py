@@ -145,13 +145,13 @@ def self_consistency_init(alpahfold,num_seqs):
         }
     mpnn_config_dict = OmegaConf.create(mpnn_config_dict)
     mpnn_model = model_init(mpnn_config_dict, device='cuda')
-    cfg = OmegaConf.load('/storage/caolongxingLab/fangminchao/Proteus/Proteus_flow_matching/configs/inference.yaml')
+    cfg = OmegaConf.load('./Proteus_flow_matching/configs/inference.yaml')
     af2_configs = cfg.inference.self_consistency.structure_prediction.alphafold
     af2_setting = {
         "models": [3] ,
         "num_recycles": af2_configs.num_recycles,
         'prefix': 'monomer',
-        'params_dir': f'/storage/caolongxingLab/fangminchao/Proteus/Proteus_flow_matching/{cfg.inference.self_consistency.structure_prediction.alphafold.params_dir}'
+        'params_dir': f'./Proteus_flow_matching/{cfg.inference.self_consistency.structure_prediction.alphafold.params_dir}'
     }
     if alpahfold:
         prediction_model = mk_af_model(
@@ -168,7 +168,7 @@ def self_consistency_init(alpahfold,num_seqs):
     
 def get_fake_msa(file_path: str,fake_msa,output_dir):
     command = [
-                "python", "/storage/caolongxingLab/fangminchao/work/LigandMPNN/run.py", "--model_type", "ligand_mpnn",
+                "python", "./LigandMPNN/run.py", "--model_type", "ligand_mpnn",
                 "--seed", "111",
                 "--pdb_path", f"{file_path}",
                 "--out_folder", f"{output_dir}",
@@ -851,7 +851,7 @@ def run_AF3_evaluation(output_dir,json_path):
             "--bind", "/storage/caolongxingLab/fangminchao/tools/alphafold3/model:/root/models",
             "--bind", "/storage/caolongxingLab/fangminchao/database/AF3/public_databases:/root/public_databases",
             "/soft/bio/alphafold/3/alphafold3.sif",
-            "python", "/storage/caolongxingLab/fangminchao/work/alphafold3_quality_evaluation/run_alphafold_avail.py",
+            "python", "./alphafold3_quality_evaluation/run_alphafold_avail.py",
             "--json_path="+json_path,
             "--model_dir=/root/models",
             "--db_dir=/root/public_databases",
@@ -898,7 +898,7 @@ def run_AF3_evaluation_with_ref_eval(output_dir,json_path,pkl_path,ref_eval):
             "--bind", "/storage/caolongxingLab/fangminchao/tools/alphafold3/model:/root/models",
             "--bind", "/storage/caolongxingLab/fangminchao/database/AF3/public_databases:/root/public_databases",
             "/soft/bio/alphafold/3/alphafold3.sif",
-            "python", "/storage/caolongxingLab/fangminchao/work/alphafold3_quality_evaluation/run_alphafold_avail.py",
+            "python", "./alphafold3_quality_evaluation/run_alphafold_avail.py",
             "--json_path="+json_path,
             "--ref_batch_eval",
             "--num_samples=5",
@@ -936,14 +936,14 @@ def run_AF3_evaluation_with_ref_eval(output_dir,json_path,pkl_path,ref_eval):
     except Exception as e:
         print("An unexpected error occurred:", str(e))
     
-def run_Ligandmpnn_evaluation(scaffold_path,mpnn_config_dict,plddt_good_indicates,pocket_res,output_dir):
-    pocket_plddt_good_res = common_elements(pocket_res ,plddt_good_indicates)
+def run_Ligandmpnn_evaluation(scaffold_path,mpnn_config_dict,fixed_residues_for_MPNN,pocket_res,output_dir):
+    pocket_plddt_good_res = common_elements(pocket_res ,fixed_residues_for_MPNN)
     pocket_plddt_good_res_set = set(pocket_plddt_good_res)
     pocket_res_to_design = [item for item in pocket_res if item not in pocket_plddt_good_res_set]
-    non_pocket_to_fix =  list(set(plddt_good_indicates + pocket_res))
+    non_pocket_to_fix =  list(set(fixed_residues_for_MPNN + pocket_res))
     pocket_res_to_design = " ".join([f"A{resi}" for  resi in pocket_res_to_design]) 
     non_pocket_to_fix = " ".join([f"A{resi}" for  resi in non_pocket_to_fix]) 
-    print("plddt_good_indicates",plddt_good_indicates)
+    print("fixed_residues_for_MPNN",fixed_residues_for_MPNN)
     print("pocket_res",pocket_res)
     print("pocket_res_to_design",pocket_res_to_design)
     print("non_pocket_to_fix",non_pocket_to_fix)
@@ -953,7 +953,7 @@ def run_Ligandmpnn_evaluation(scaffold_path,mpnn_config_dict,plddt_good_indicate
         output_dir_ligmpnn =os.path.join(output_dir,f"ligandmpnn{i}")
 
         command = [
-            "python", "/storage/caolongxingLab/fangminchao/work/LigandMPNN/run.py", "--model_type", "ligand_mpnn",
+            "python", "./LigandMPNN/run.py", "--model_type", "ligand_mpnn",
             "--seed", "111",
             "--pdb_path", f"{scaffold_path}",
             "--out_folder", f"{output_dir_ligmpnn}",
@@ -976,7 +976,7 @@ def run_Ligandmpnn_evaluation(scaffold_path,mpnn_config_dict,plddt_good_indicate
         output_dir_prompnn =os.path.join(output_dir,f"prompnn{i}")
         out_ligandmpnn_file = os.path.join(output_dir_ligmpnn,"packed", os.path.basename(scaffold_path.replace(".pdb","_packed_1_1.pdb")))
         command = [
-            "python", "/storage/caolongxingLab/fangminchao/work/LigandMPNN/run.py", "--model_type", "protein_mpnn",
+            "python", "./LigandMPNN/run.py", "--model_type", "protein_mpnn",
             "--seed", "111",
             "--pdb_path", f"{out_ligandmpnn_file}",
             "--out_folder", f"{output_dir_prompnn}",
@@ -1028,7 +1028,7 @@ def read_fasta_sequences(file_path):
     
 def self_consistency_sm(scaffold_path,
                         mpnn_config_dict,
-                        plddt_good_indicates,
+                        fixed_residues_for_MPNN,
                         output_dir,
                         template_path,
                         sm,  
@@ -1038,12 +1038,12 @@ def self_consistency_sm(scaffold_path,
     
     # Example usage:
 
-    pocket_res = find_pocket_residues(pdbfile="/storage/caolongxingLab/share/fangminchao/af3_benchmark/sm/50_sm_recentre_6re_16msa_templates95/recycle_2/modified_AIN_120_86_recycle_2.pdb",
+    pocket_res = find_pocket_residues(pdbfile=scaffold_path,
                                          cutoff_CA=8.0, cutoff_sc=6.0)
     print(f"pocket residues: {pocket_res}")
     sequences = run_Ligandmpnn_evaluation(scaffold_path,
                                                    mpnn_config_dict,
-                                                   plddt_good_indicates,
+                                                   fixed_residues_for_MPNN,
                                                    pocket_res,
                                                    output_dir)
     seq_count =0 
@@ -1107,7 +1107,7 @@ def self_consistency_sm(scaffold_path,
         result['prediction_model'] = "AF3"
         result['A_plddt'] = calculate_average_b_factor(cif_path,["A"])
         result['B_plddt'] = calculate_average_b_factor(cif_path,["B"])
-        result['AF2_plddt'] = calculate_average_b_factor(cif_path,["A","B"])
+        result['total_plddt'] = calculate_average_b_factor(cif_path,["A","B"])
         result['key_res_plddt'] = calculate_key_b_factor(cif_path,5)
         result["A_ptm"] = confidence_json['chain_ptm'][0]
         result["B_ptm"] = confidence_json['chain_ptm'][1]
@@ -1125,14 +1125,14 @@ def self_consistency_sm(scaffold_path,
 
 
 
-def self_consistency(scaffold_path,output_path_tag, mpnn_model, mpnn_config_dict, prediction_model, af2_setting,plddt_good_indicates):
+def self_consistency(scaffold_path,output_path_tag, mpnn_model, mpnn_config_dict, prediction_model, af2_setting,fixed_residues_for_MPNN):
     
     mpnn_seqs, mpnn_scores = mpnn_design(
                 config=mpnn_config_dict,
                 protein_path=scaffold_path,
                 model=mpnn_model,
                 design_chains=['A'],
-                fixed_residues=plddt_good_indicates,
+                fixed_residues=fixed_residues_for_MPNN,
             )
     #print(mpnn_seqs)
     import pandas as pd
@@ -1174,7 +1174,7 @@ def run_alphafold3(json_path: str, pkl_path: str, output_dir: str,ref_time_steps
             "--bind", "/storage/caolongxingLab/fangminchao/tools/alphafold3/model:/root/models",
             "--bind", "/storage/caolongxingLab/fangminchao/database/AF3/public_databases:/root/public_databases",
             "/soft/bio/alphafold/3/alphafold3.sif",
-            "python", "/storage/caolongxingLab/fangminchao/work/alphafold3_quality_evaluation/run_alphafold_avail.py",
+            "python", "./alphafold3_quality_evaluation/run_alphafold_avail.py",
             "--json_path="+json_path,
             "--ref_pdb_path="+pkl_path,
             "--ref_time_steps=" +ref_time_steps,
@@ -1302,7 +1302,7 @@ def process_single_pdb(pdb_file: str,
         'iptm': np.nan,
         'AF2_RMSD': np.nan,
         'AF2_LIG_RMSD': np.nan,
-        'AF2_plddt': np.nan,
+        'total_plddt': np.nan,
         'AF3_PTM': np.nan,
         'AF3_iPTM': np.nan,
         'AF3_iPAE': np.nan,
@@ -1335,7 +1335,7 @@ def process_single_pdb(pdb_file: str,
         copied_file = os.path.join(target_dir, pdb_file.replace(".pdb", f"_recycle_{cycle+1}.pdb"))
 
         shutil.copy(source_file, copied_file)
-        plddt_good_indicates = []
+        fixed_residues_for_MPNN = []
         plddt_atoms_indicates = []
         if template_plddt_threshold > 0 and cycle >=1:
             tag_pre = f"{pdb_file}_recycle_{cycle}".lower()
@@ -1343,8 +1343,8 @@ def process_single_pdb(pdb_file: str,
             cif_pre_path= os.path.join(previous_dir, tag_pre.replace(".pdb", ""), 
                                   tag_pre.replace(".pdb", "") + "_model.cif")
             template_to_json= template_process(cif_pre_path,template_plddt_threshold)
-            plddt_good_indicates = template_to_json[0]["templateIndices"]
-            print(plddt_good_indicates)
+            fixed_residues_for_MPNN = template_to_json[0]["templateIndices"]
+            print(fixed_residues_for_MPNN)
             if sm_plddt_threshold > 0:
                 plddt_atoms_indicates = atoms_templates_process(cif_pre_path, sm_plddt_threshold)
                 print(plddt_atoms_indicates)
@@ -1355,7 +1355,7 @@ def process_single_pdb(pdb_file: str,
             results_af2=self_consistency_sm(
                 copied_file,
                 mpnn_config_dict,
-                plddt_good_indicates,
+                fixed_residues_for_MPNN,
                 AF3_sm_dir,
                 template_path,
                 sm,
@@ -1385,7 +1385,7 @@ def process_single_pdb(pdb_file: str,
                     min_rmsd_lig = entry['rmsd_lig']
                     A_plddt = entry['A_plddt']
                     B_plddt = entry['B_plddt']
-                    all_plddt = entry['AF2_plddt']
+                    all_plddt = entry['total_plddt']
                     iptm = entry['iptm']
                     A_ptm = entry['A_ptm']
                     B_ptm = entry['B_ptm']
@@ -1402,7 +1402,7 @@ def process_single_pdb(pdb_file: str,
             metrics['AF2_RMSD'] = min_rmsd
             metrics['A_plddt'] = A_plddt
             metrics['B_plddt'] = B_plddt
-            metrics['AF2_plddt'] = all_plddt
+            metrics['total_plddt'] = all_plddt
             metrics['iptm'] = iptm
             metrics['A_ptm'] = A_ptm
             metrics['B_ptm'] = B_ptm
@@ -1439,7 +1439,7 @@ def process_single_pdb(pdb_file: str,
                 mpnn_config_dict, 
                 prediction_model, 
                 af2_setting,
-                 [("A", resi) for resi in plddt_good_indicates]
+                 [("A", resi) for resi in fixed_residues_for_MPNN]
             )
 
 
@@ -1453,7 +1453,7 @@ def process_single_pdb(pdb_file: str,
                     sequence = entry['sequence']
 
             metrics['AF2_RMSD'] = min_rmsd
-            metrics['AF2_plddt'] = corresponding_plddt
+            metrics['total_plddt'] = corresponding_plddt
 
             for entry in results_af2:
                 metrics['AF2_Results'].append({
@@ -1635,11 +1635,11 @@ def main():
 
                 
                 print(f"  Cycle {cycle+1} completed:")
-                print(f"    AF2 RMSD: {metrics['AF2_RMSD']:.3f}")
-                print(f"    AF2 A plddt: {metrics['A_plddt']:.3f}")
-                print(f"    AF2 B plddt: {metrics['B_plddt']:.3f}")
-                print(f"    AF2 all plddt: {metrics['AF2_plddt']:.3f}")
-                print(f"    AF2 iptm: {metrics['iptm']:.3f}")
+                print(f"    AF3 RMSD: {metrics['AF2_RMSD']:.3f}")
+                print(f"    AF3 A plddt: {metrics['A_plddt']:.3f}")
+                print(f"    AF3 B plddt: {metrics['B_plddt']:.3f}")
+                print(f"    AF3 all plddt: {metrics['total_plddt']:.3f}")
+                print(f"    AF3 iptm: {metrics['iptm']:.3f}")
                 print(f"    AF3 Status: {metrics['AF3_Status']}")
                 if metrics['AF3_Status'] == 'Success':
                     print(f"    AF3 PTM: {metrics['AF3_PTM']:.3f}")

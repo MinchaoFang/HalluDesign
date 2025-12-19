@@ -19,12 +19,11 @@ import json
 import esm.esmfold.v1.pretrained
 import esm.esmfold.v1.esmfold
 from copy import deepcopy
-from Bio.PDB import PDBParser, MMCIFParser
 import json
 import csv
 import os
 import sys
-
+from data import residue_constants as rc
 from omegaconf import OmegaConf
 from colabdesign.af.model import mk_af_model
 from ProteinMPNN.protein_mpnn_utils import model_init
@@ -32,7 +31,8 @@ from ProteinMPNN.protein_mpnn_pyrosetta import mpnn_design
 from data.parsers import from_pdb_string
 from local_scripts.self_consistency_evaluation import run_folding_and_evaluation
 from data import protein
-from Bio.PDB import MMCIFParser, PDBIO
+from Bio.PDB import MMCIFParser, PDBIO, MMCIFIO, PDBParser
+from Bio.PDB import Structure, Model
 import torch
 import pose_sequence 
 
@@ -64,6 +64,10 @@ def parse_arguments():
                        help='pose_seq_scaffold or af2 or none')
     parser.add_argument('--alphafold', type=bool,  default=True,
                        help='AF2 or esmfold')
+    parser.add_argument('--multimer', type=bool,  default=True,
+                       help='AF2 multimer or not')
+    parser.add_argument('--ddg', type=bool,  default=False,
+                       help='rosetta ddg')
     parser.add_argument('--fake_msa', type=int,  default=None,
                        help='whether to use how many ProteinMPNN seqs to fake MSA')
     return parser.parse_args()
@@ -77,8 +81,112 @@ def convert_cif_to_pdb(cif_file, pdb_file):
         io.save(pdb_file)
         return True
     except Exception as e:
-        print(f"error: {str(e)}")
+        print(f"convert error: {str(e)}")
         return False
+
+import pyrosetta
+
+from pyrosetta.rosetta.protocols.analysis import InterfaceAnalyzerMover
+
+from pyrosetta.rosetta.protocols.relax import FastRelax
+
+from pyrosetta import MoveMap
+
+class InterfaceAnalyzer:
+    def __init__(self, params_file=None):
+        self.params_file = params_file
+
+        self._init_pyrosetta()
+        self.analyzer = InterfaceAnalyzerMover()
+        self._configure_analyzer()  
+
+        self._configure_relax()   
+
+    def _init_pyrosetta(self):
+        """init PyRosetta"""
+        extra_options = "-mute all"
+        if self.params_file:
+            extra_options += f" -extra_res_fa {self.params_file}"
+        pyrosetta.init(extra_options=extra_options)
+
+    def _configure_analyzer(self):
+        self.scorefxn = pyrosetta.get_fa_scorefxn()
+        self.analyzer.set_scorefunction(self.scorefxn)
+        options = {
+            'set_compute_packstat': True,
+            'set_compute_interface_energy': True,
+            'set_calc_dSASA': True,
+            'set_calc_hbond_sasaE': True,
+            'set_compute_interface_sc': True,
+            'set_pack_separated': True,
+            'set_use_centroid_dG': False
+
+        }
+        for opt, val in options.items():
+            getattr(self.analyzer, opt)(val)
+
+    def _configure_relax(self):
+        self.relax_protocol = FastRelax()
+        self.relax_protocol.set_scorefxn(self.scorefxn)
+        
+
+        mm = MoveMap()
+        mm.set_bb(True)
+        mm.set_chi(True)
+        self.relax_protocol.set_movemap(mm)
+        # self.relax_protocol.set_script_file('MonomerRelax2019')
+
+    def analyze_interface(self, pdb_path, protein_chain='A', ligand_chain='B'):
+        try:
+            self._init_pyrosetta()  
+
+            pose = self._load_and_validate_pdb(pdb_path, protein_chain, ligand_chain)
+            
+
+            print("apply Relax")
+            self.relax_protocol.apply(pose)
+            
+
+            self.analyzer.set_interface(f"{protein_chain}_{ligand_chain}")
+            self.analyzer.apply(pose)
+            return self._compile_results()
+        except Exception as e:
+            print(f"error: {e}")
+            return None
+
+    def _load_and_validate_pdb(self, pdb_path, protein_chain, ligand_chain):
+        """load PD"""
+        pose = pyrosetta.pose_from_pdb(pdb_path)
+
+        chains = {pose.pdb_info().chain(res) for res in range(1, pose.total_residue()+1)}
+        for chain in [protein_chain, ligand_chain]:
+            if chain not in chains:
+                raise ValueError(f"chain {chain} missing")
+
+        lig_residues = [res for res in range(1, pose.total_residue()+1) 
+                       if pose.pdb_info().chain(res) == ligand_chain]
+        if not lig_residues:
+            raise ValueError(f"chain {ligand_chain} is no ligand")
+        print(f"load: {pdb_path}, total residues: {pose.total_residue()}")
+        return pose
+
+    def _compile_results(self):
+        """collect data"""
+        data = self.analyzer.get_all_data()
+        return self.analyzer.get_interface_dG(), data.dSASA, data.packstat, data.interface_hbonds, data.sc_value,data.dG_dSASA_ratio, list(data.interface_residues)
+
+
+def calculate_rosetta_metric(pdb_path):
+    analyzer = InterfaceAnalyzer()
+
+
+    interface_dG,dSASA,packstat,interface_hbonds,sc_value,energy_density,interface_residues = analyzer.analyze_interface(
+        pdb_path=pdb_path,
+        protein_chain='A',
+        ligand_chain='B'
+    )
+    
+    return interface_dG,dSASA,packstat,interface_hbonds
 
 def self_consistency_init(alpahfold,num_seqs):
     mpnn_config_dict = {
@@ -90,19 +198,21 @@ def self_consistency_init(alpahfold,num_seqs):
         }
     mpnn_config_dict = OmegaConf.create(mpnn_config_dict)
     mpnn_model = model_init(mpnn_config_dict, device='cuda')
-    cfg = OmegaConf.load('/storage/caolongxingLab/fangminchao/Proteus/Proteus_flow_matching/configs/inference.yaml')
+    cfg = OmegaConf.load('./Proteus_flow_matching/configs/inference.yaml')
     af2_configs = cfg.inference.self_consistency.structure_prediction.alphafold
     af2_setting = {
         "models": [3] ,
         "num_recycles": af2_configs.num_recycles,
         'prefix': 'monomer',
-        'params_dir': f'/storage/caolongxingLab/fangminchao/Proteus/Proteus_flow_matching/{cfg.inference.self_consistency.structure_prediction.alphafold.params_dir}'
+        'params_dir': f'./Proteus_flow_matching/{cfg.inference.self_consistency.structure_prediction.alphafold.params_dir}'
     }
     if alpahfold:
         prediction_model = mk_af_model(
-                protocol="hallucination", 
-                initial_guess=False, 
+                protocol="binder", 
+                initial_guess=True, 
+                use_multimer=True,
                 use_initial_atom_pos=False, num_recycles=af2_configs.num_recycles, 
+                
                 data_dir=af2_setting['params_dir'],
             )
     else:
@@ -110,6 +220,7 @@ def self_consistency_init(alpahfold,num_seqs):
         prediction_model = prediction_model.eval().cuda()
         prediction_model.set_chunk_size(256)
     return mpnn_model, mpnn_config_dict, prediction_model, af2_setting
+
 
 def get_fake_msa(file_path: str,fake_msa,mpnn_model):
     mpnn_config_dict_for_msa = {
@@ -124,6 +235,7 @@ def get_fake_msa(file_path: str,fake_msa,mpnn_model):
                 config=mpnn_config_dict_for_msa,
                 protein_path=file_path,
                 model=mpnn_model,
+                return_full_sequence=False,
                 design_chains=['A']
             )
     fake_msa = ""
@@ -131,7 +243,8 @@ def get_fake_msa(file_path: str,fake_msa,mpnn_model):
     for i, seq in enumerate(mpnn_seqs, 1):
         msa.append(f">Seq{i}")
         msa.append(seq)
-    return "\n".join(msa)
+    return "\n".join(msa)+"\n"
+
 
 def get_random_seeds(num_seeds: int):
     import random
@@ -165,6 +278,7 @@ def get_chain_sequence(file_path: str, chain_id: str) -> str:
         return None
 
 def calculate_average_b_factor(cif_file: str) -> float:
+
     try:
         parser = MMCIFParser(QUIET=True)
         structure = parser.get_structure("protein", cif_file)
@@ -180,6 +294,23 @@ def calculate_average_b_factor(cif_file: str) -> float:
     except Exception as e:
         print(f"error: {str(e)}")
         return 0.0
+
+def extract_chain_A(input_cif, output_cif):
+
+    import copy
+    parser = MMCIFParser()
+    structure = parser.get_structure('input_structure', input_cif)
+
+    model = structure[0]
+    chain_a = copy.deepcopy(model['A'])
+    new_structure = Structure.Structure('output')
+    new_model = Model.Model(0)
+    new_model.add(chain_a)
+    new_structure.add(new_model)
+
+    mmcif_io = MMCIFIO()
+    mmcif_io.set_structure(new_structure)
+    mmcif_io.save(output_cif)
 
 def process_confidence_metrics(confidence_json_path: str, cif_path: str, copied_file : str) -> Dict:
     try:
@@ -218,81 +349,106 @@ from Bio.PDB.Atom import Atom
 import numpy as np
 
 
-import numpy as np
 from Bio.PDB import MMCIFParser, PDBParser, Superimposer
-from Bio.PDB.Atom import Atom
 
-def get_ca_atoms(structure):
-    ca_atoms = []
-    for model in structure:
-        for chain in model:
-            for residue in chain:
-                if "CA" in residue:  
-                    ca_atoms.append(residue["CA"])
-    return ca_atoms
+import numpy as np
 
-def calculate_ca_rmsd(cif_file, pdb_file):
+def get_parser(filename):
+    if filename.endswith(".cif"):
+        return MMCIFParser(QUIET=True)
+    elif filename.endswith(".pdb"):
+        return PDBParser(QUIET=True)
+    else:
+        raise ValueError(f"Unsupported file format: {filename}")
 
-    cif_parser = MMCIFParser(QUIET=True)
-    cif_structure = cif_parser.get_structure("CIF", cif_file)
+def get_first_model(structure):
+    return next(structure.get_models())
 
-    pdb_parser = PDBParser(QUIET=True)
-    pdb_structure = pdb_parser.get_structure("PDB", pdb_file)
+def get_sorted_ca_atoms(model):
+    atoms = []
+    for chain in sorted(model, key=lambda c: c.id):  
 
-    cif_ca_atoms = get_ca_atoms(cif_structure)
-    pdb_ca_atoms = get_ca_atoms(pdb_structure)
+        for residue in sorted(chain, key=lambda r: r.id[1]):
+
+            if residue.has_id("CA"):
+                atoms.append(residue["CA"])
+    return atoms
+
+def calculate_ca_rmsd(first_file, second_file,turn_over=False):
+    try:
+
+        first_parser = get_parser(first_file)
+        second_parser = get_parser(second_file)
+        
+
+        struct1 = first_parser.get_structure("ref", first_file)
+        struct2 = second_parser.get_structure("mobile", second_file)
+        model1 = get_first_model(struct1)
+        model2 = get_first_model(struct2)
+        
+        if turn_over:
+
+            has_chain_a = 'A' in model1
+            has_chain_b = 'B' in model1
+            if has_chain_a and has_chain_b:
+                chain_a = model1['A']
+                chain_b = model1['B']
+                
+
+                model1.detach_child('A')
+                model1.detach_child('B')
+                
+                chain_a.id = 'B'
+                chain_b.id = 'A'
+
+                model1.add(chain_b)
+                model1.add(chain_a)
 
 
-    if len(cif_ca_atoms) != len(pdb_ca_atoms):
-        raise ValueError("CIf and PDB atoms incorrect")
+        ref_atoms = get_sorted_ca_atoms(model1)
+        mobile_atoms = get_sorted_ca_atoms(model2)
+        
+        if len(ref_atoms) != len(mobile_atoms):
+            raise ValueError("atoms incorrect")
 
 
-    cif_coords = np.array([atom.coord for atom in cif_ca_atoms])
-    pdb_coords = np.array([atom.coord for atom in pdb_ca_atoms])
+        super_imposer = Superimposer()
+        super_imposer.set_atoms(ref_atoms, mobile_atoms)  
 
-    super_imposer = Superimposer()
-    super_imposer.set_atoms(pdb_ca_atoms, cif_ca_atoms)
-    super_imposer.apply(pdb_ca_atoms)  
+        super_imposer.apply(mobile_atoms)
 
-    # return RMSD
-    return super_imposer.rms
+        
+        return super_imposer.rms
+
+    
+    except Exception as e:
+        print(f"rmsd failed: {str(e)}")
+        return None
 
 from Bio.PDB import MMCIFParser
 from Bio.PDB.MMCIF2Dict import MMCIF2Dict
 
-def template_process(cif_path, plddt_threshold=70, min_continuous_length=5):
-    """
-    Extracts continuous high-confidence regions (based on pLDDT values)
-    from an AlphaFold or predicted structure in mmCIF format.
-    
-    Args:
-        cif_path (str): Path to the mmCIF file.
-        plddt_threshold (float): Minimum per-residue pLDDT score to be considered reliable.
-        min_continuous_length (int): Minimum number of consecutive residues above the threshold to keep.
 
-    Returns:
-        list[dict]: A list containing one dictionary with the following keys:
-            - "mmcif": Placeholder (empty string)
-            - "queryIndices": Residue indices that passed the filtering criteria
-            - "templateIndices": Same as queryIndices
-    """
-    
-    # Read the mmCIF file
+from Bio.PDB.MMCIF2Dict import MMCIF2Dict
+
+def template_process(cif_path, plddt_threshold=70, min_continuous_length=5):
+
     mmcif_dict = MMCIF2Dict(cif_path)
-    
-    # Extract per-atom pLDDT (stored as B-factor), chain IDs, and residue IDs
-    b_factors = mmcif_dict["_atom_site.B_iso_or_equiv"]   # pLDDT values
-    chain_ids = mmcif_dict["_atom_site.auth_asym_id"]     # Chain IDs
-    residue_ids = mmcif_dict["_atom_site.auth_seq_id"]    # Residue IDs
-    
-    # Convert pLDDT values to float
+
+    b_factors = mmcif_dict["_atom_site.B_iso_or_equiv"]  
+    chain_ids = mmcif_dict["_atom_site.auth_asym_id"]   
+
+    residue_ids = mmcif_dict["_atom_site.auth_seq_id"]   
+
+
     b_factors = list(map(float, b_factors))
-    
-    # Store per-residue pLDDT values grouped by chain
+
+
     chain_residue_plddt = {}
     for i in range(len(b_factors)):
         chain_id = chain_ids[i]
-        residue_id = int(residue_ids[i]) - 1  # Convert to 0-based index
+        residue_id = int(residue_ids[i]) - 1  
+
         plddt = b_factors[i]
         
         if chain_id not in chain_residue_plddt:
@@ -301,97 +457,100 @@ def template_process(cif_path, plddt_threshold=70, min_continuous_length=5):
             chain_residue_plddt[chain_id][residue_id] = []
         
         chain_residue_plddt[chain_id][residue_id].append(plddt)
-    
-    # Compute average pLDDT for each residue
+
     chain_residue_avg_plddt = {}
     for chain_id, residue_dict in chain_residue_plddt.items():
         chain_residue_avg_plddt[chain_id] = {}
         for residue_id, plddt_list in residue_dict.items():
             avg_plddt = sum(plddt_list) / len(plddt_list)
             chain_residue_avg_plddt[chain_id][residue_id] = avg_plddt
-    
-    # Identify residues above the pLDDT threshold
-    chain_to_residues = {}
-    for chain_id, residue_dict in chain_residue_avg_plddt.items():
-        for residue_id, avg_plddt in residue_dict.items():
-            if avg_plddt > plddt_threshold:
-                if chain_id not in chain_to_residues:
-                    chain_to_residues[chain_id] = []
-                chain_to_residues[chain_id].append(residue_id)
-    
-    # Filter for continuous residue segments
-    filtered_indices = []
 
-    all_indices = []
-    for chain_id, residues in chain_to_residues.items():
-        all_indices.extend(residues)  # Collect all residues passing the threshold
+    chain_to_residues = []
+    for residue_id, avg_plddt in chain_residue_avg_plddt.get('A', {}).items():
+        if avg_plddt > plddt_threshold:
+            chain_to_residues.append(residue_id)
     
-    # Identify continuous regions that meet minimum length requirement
-    for chain_id, residues in chain_to_residues.items():
-        residues.sort()
-        current_sequence = []
-        for i, residue_id in enumerate(residues):
-            if not current_sequence:
+
+    filtered_indices = []
+    chain_to_residues.sort()
+    current_sequence = []
+    for i, residue_id in enumerate(chain_to_residues):
+        if not current_sequence:
+            current_sequence.append(residue_id)
+        else:
+            if residue_id == current_sequence[-1] + 1:
                 current_sequence.append(residue_id)
             else:
-                if residue_id == current_sequence[-1] + 1:
-                    current_sequence.append(residue_id)
-                else:
-                    if len(current_sequence) >= min_continuous_length:
-                        filtered_indices.extend(current_sequence)
-                    current_sequence = [residue_id]
-        
-        if len(current_sequence) >= min_continuous_length:
-            filtered_indices.extend(current_sequence)
+                if len(current_sequence) >= min_continuous_length:
+                    filtered_indices.extend(current_sequence)
+                current_sequence = [residue_id]
+    
+    if len(current_sequence) >= min_continuous_length:
+        filtered_indices.extend(current_sequence)
 
-    # Build the final result dictionary
     result = [{
         "mmcif": "",
         "queryIndices": filtered_indices,
         "templateIndices": filtered_indices
+
     }]
-    
+    print(filtered_indices)
     return result
 
 
 
-def self_consistency(scaffold_path,output_path_tag, mpnn_model, mpnn_config_dict, prediction_model, af2_setting,plddt_good_indicates):
+def self_consistency(scaffold_path,output_path_tag, mpnn_model, mpnn_config_dict, prediction_model, af2_setting,fixed_residues_for_MPNN,multimer,ddg):
     
     mpnn_seqs, mpnn_scores = mpnn_design(
                 config=mpnn_config_dict,
                 protein_path=scaffold_path,
                 model=mpnn_model,
+                return_full_sequence=True,
                 design_chains=['A'],
-                fixed_residues=plddt_good_indicates,
+                fixed_residues=fixed_residues_for_MPNN,
             )
     #print(mpnn_seqs)
-    import pandas as pd
-    import re
-
+    scaffold_prot = from_pdb_string(open(scaffold_path).read(), 'A' if not multimer else None)
+    length = scaffold_prot.atom_positions.shape[0]
+    struct2seq_results = [{'mpnn_sequence': seq[:length], 'sequence_score': score} for seq, score in zip(mpnn_seqs, mpnn_scores)]
+    struct2seq_df = pd.DataFrame(struct2seq_results)
+    mpnn_seqs = struct2seq_df['mpnn_sequence'].values
+    
+    print(mpnn_seqs)
     results_list = []
     for i in range(len(mpnn_seqs)):
-        sequence = mpnn_seqs[i].split(':')[0] if ':' in mpnn_seqs[i] else mpnn_seqs[i]
-        sequence = re.sub("[^A-Z]", "", sequence.upper())
-        scaffold_prot = from_pdb_string(open(scaffold_path).read(), 'A' )
-        evaluated_results, pred_prots = run_folding_and_evaluation(prediction_model, sequence, scaffold_prot, None, af2_setting, template_chains=None)
+        chain_separator = np.where(scaffold_prot.chain_index[:-1] != scaffold_prot.chain_index[1:])[0] + 1
+        chain_nums = chain_separator.shape[0] + 1
+        first_chain_length = chain_separator[0] if chain_nums > 1 else length
+
+        sequence = mpnn_seqs[i] + "".join([rc.restypes[i] for i in scaffold_prot.aatype.tolist()])[length:]
+        sequence = list(sequence)
+        for pos in reversed(chain_separator):
+            sequence.insert(pos, ':')
+        sequence = ''.join(sequence)
+        print(sequence)
+        evaluated_results, pred_prots = run_folding_and_evaluation(prediction_model, sequence, scaffold_prot, None, af2_setting, template_chains=["B"])
         #print(evaluated_results)
-        for result in evaluated_results:
+        for j, (result, pred_prot) in enumerate(zip(evaluated_results, pred_prots)):
+            fold_path = os.path.join(os.path.dirname(scaffold_path), output_path_tag + f"_af2_{i}.pdb")
+            with open(fold_path, 'w') as f:
+                f.write(protein.to_pdb(pred_prot))
+            result["rmsd_manual"] = calculate_ca_rmsd(fold_path,scaffold_path,turn_over=True)
+            result["alphafold_path"] = fold_path
+            result['mpnn_sequence'] = mpnn_seqs[i]
             result['sequence'] = sequence  
-            result['index'] = i          
+            result['index'] = i           
+            print(ddg)
+            if ddg:
+                result["interface_dG"] ,result["dSASA"] ,result["packstat"],result["interface_hbonds"] = calculate_rosetta_metric(fold_path)
+            else:
+                result["interface_dG"] ,result["dSASA"] ,result["packstat"],result["interface_hbonds"] = 0,0,0,0
             results_list.append(result)
-    for j, (result, pred_prot) in enumerate(zip(evaluated_results, pred_prots)):
-        fold_path = os.path.join(os.path.dirname(scaffold_path), output_path_tag + f"_af2_{j}.pdb")
-        with open(fold_path, 'w') as f:
-            f.write(protein.to_pdb(pred_prot))
-        result["alphafold_path"] = fold_path
-        result['mpnn_sequence'] = mpnn_seqs[i]
-   
     return results_list
 
 import subprocess
 
 def run_alphafold3(json_path: str, pkl_path: str, output_dir: str,ref_time_steps: str,num_samples: str,) -> bool:
-    """run AlphaFold3"""
     try:
         command = [
             "module", "load", "alphafold/3_a40-tmp", "&&",
@@ -403,7 +562,7 @@ def run_alphafold3(json_path: str, pkl_path: str, output_dir: str,ref_time_steps
             "--bind", "/storage/caolongxingLab/fangminchao/tools/alphafold3/model:/root/models",
             "--bind", "/storage/caolongxingLab/fangminchao/database/AF3/public_databases:/root/public_databases",
             "/soft/bio/alphafold/3/alphafold3.sif",
-            "python", "/storage/caolongxingLab/fangminchao/work/alphafold3_quality_evaluation/run_alphafold_avail.py",
+            "python", "./alphafold3_quality_evaluation/run_alphafold_avail.py",
             "--json_path="+json_path,
             "--ref_pdb_path="+pkl_path,
             "--ref_time_steps=" +ref_time_steps,
@@ -427,7 +586,7 @@ def run_alphafold3(json_path: str, pkl_path: str, output_dir: str,ref_time_steps
     #    print("out of time")
     #    return False
     #except Exception as e:
-    #    print(f"out of time: {str(e)}")
+    #    print(f"error: {str(e)}")
     #    return False
         # Run the command
         result = subprocess.run(
@@ -448,16 +607,13 @@ def run_alphafold3(json_path: str, pkl_path: str, output_dir: str,ref_time_steps
         print("Return code:", e.returncode)
         print("Error message:", e.stderr)
         print("Full output:", e.stdout)
-        return False
 
     except subprocess.TimeoutExpired as e:
         print("Command timed out!")
         print("Timeout:", e.timeout)
-        return False
 
     except Exception as e:
         print("An unexpected error occurred:", str(e))
-        return False
 
 import torch
 import gc
@@ -515,13 +671,20 @@ def process_single_pdb(pdb_file: str,
                       template_plddt_threshold,
                       reconstruct,
                       fake_msa,
+                      multimer,
+                      ddg,
                       run_af3: bool = True) -> Dict:
-
     metrics = {
         'PDB': pdb_file,
         'Cycle': cycle + 1,
         'AF2_RMSD': np.nan,
         'AF2_pLDDT': np.nan,
+        'pae' : np.nan,
+        'iptm' : np.nan, 
+        'interface_dG' : np.nan,
+        'dSASA'  : np.nan,
+        'packstat' : np.nan,
+        'interface_hbonds' : np.nan,
         'AF3_PTM': np.nan,
         'AF3_iPTM': np.nan,
         'AF3_iPAE': np.nan,
@@ -532,23 +695,23 @@ def process_single_pdb(pdb_file: str,
     }
     
     try:
-
         target_dir = os.path.join(output_dir, f"recycle_{cycle+1}")
         os.makedirs(target_dir, exist_ok=True)
         
+
         source_file = os.path.join(input_dir, pdb_file) if cycle == 0 else input_dir
         copied_file = os.path.join(target_dir, pdb_file.replace(".pdb", f"_recycle_{cycle+1}.pdb"))
 
         shutil.copy(source_file, copied_file)
-        plddt_good_indicates =[]
+        fixed_residues_for_MPNN =[]
         if template_plddt_threshold > 0 and cycle >=1:
-            tag_pre = f"{pdb_file}_recycle_{cycle}"
+            tag_pre = f"{pdb_file}_recycle_{cycle}".lower()
             previous_dir = os.path.join(output_dir, f"recycle_{cycle}")
             cif_pre_path= os.path.join(previous_dir, tag_pre.replace(".pdb", ""), 
                                   tag_pre.replace(".pdb", "") + "_model.cif")
             template_to_json= template_process(cif_pre_path,template_plddt_threshold)
-            plddt_good_indicates = template_to_json[0]["templateIndices"]
-            print(plddt_good_indicates)
+            fixed_residues_for_MPNN = template_to_json[0]["templateIndices"]
+            print(fixed_residues_for_MPNN)
 
         results_af2 = self_consistency(
             copied_file, 
@@ -557,32 +720,52 @@ def process_single_pdb(pdb_file: str,
             mpnn_config_dict, 
             prediction_model, 
             af2_setting,
-             [("A", resi) for resi in plddt_good_indicates]
+             [("A", resi) for resi in fixed_residues_for_MPNN],
+             multimer,
+             ddg
         )
         
         min_rmsd = float('inf')
         corresponding_plddt = None
-        seq = None
+        pae =None
+        iptm =None 
+        interface_dG = None 
+        dSASA  = None 
+        packstat = None 
+        interface_hbonds =None 
         for entry in results_af2:
-            if entry['rmsd'] < min_rmsd:
-                min_rmsd = entry['rmsd']
+            if entry['rmsd_manual'] < min_rmsd:
+                min_rmsd = entry['rmsd_manual']
                 corresponding_plddt = entry['plddt']
-                seq = entry['sequence']
-        
+                iptm = entry["i_ptm"]
+                pae = entry["pae"]
+                interface_dG = entry["interface_dG"] 
+                dSASA  = entry["dSASA"] 
+                packstat = entry["packstat"]
+                interface_hbonds  = entry["interface_hbonds"] 
         metrics['AF2_RMSD'] = min_rmsd
         metrics['AF2_pLDDT'] = corresponding_plddt
-        
+        metrics["pae"] = pae
+        metrics["iptm"] = iptm 
+        metrics["interface_dG"] =interface_dG
+        metrics["dSASA"] = dSASA
+        metrics["packstat"] = packstat
+        metrics["interface_hbonds"] =interface_hbonds
         for entry in results_af2:
             metrics['AF2_Results'].append({
                 'sequence': entry['sequence'],
-                'rmsd': entry['rmsd'],
-                'plddt': entry['plddt']
+                'rmsd': entry['rmsd_manual'],
+                'plddt': entry['plddt'],
+                "iptm" : entry["i_ptm"],
+                "pae" : entry["pae"],
+                "interface_dG ": entry["interface_dG"] ,
+                "dSASA" : entry["dSASA"] ,
+                "packstat" : entry["packstat"] ,
+                "interface_hbonds" :  entry["interface_hbonds"] 
             })
-            
 
         if not run_af3:
             return metrics, copied_file
-
 
         with open(template_path, 'r') as f:
             template = json.load(f)
@@ -603,20 +786,24 @@ def process_single_pdb(pdb_file: str,
         input_json = template.copy()
         input_json['name'] = tag.replace(".pdb", "")
         input_json['sequences'][0]['protein']["sequence"] = get_chain_sequence(copied_file, 'A')
+        #input_json['sequences'][1]['protein']["sequence"] = get_chain_sequence(copied_file, 'B')
         input_json["modelSeeds"] = get_random_seeds(num_seeds)
         if fake_msa and cycle >=1:
-            tag_pre = f"{pdb_file}_recycle_{cycle}"
+            tag_pre = f"{pdb_file}_recycle_{cycle}".lower()
             previous_dir = os.path.join(output_dir, f"recycle_{cycle}")
             seeds_path = os.path.join(previous_dir, tag_pre.replace(".pdb", ""))
             subfolders = [f for f in os.listdir(seeds_path) 
                  if os.path.isdir(os.path.join(seeds_path, f))]
-            msa=""
+            msa=f'>query\n{input_json["sequences"][0]["protein"]["sequence"]}\n'
             for subfolder in subfolders:
                 pdb_file = os.path.join(seeds_path, subfolder,subfolder+"_model.cif")
-                msa=msa+get_fake_msa(pdb_file,fake_msa,mpnn_model)
-            input_json['sequences'][0]['protein']["pairedMsa"] = msa
+                msa_chunk = get_fake_msa(pdb_file, fake_msa, mpnn_model)
+                msa += msa_chunk
+            input_json['sequences'][0]['protein']["unpairedMsa"] = msa
         if template_plddt_threshold > 0 and cycle >=1:
-            template_to_json[0]["mmcif"] = _read_file(pathlib.Path(cif_pre_path), pathlib.Path(json_path))
+            A_chain_path = cif_pre_path.replace(".cif","chain_A.cif")
+            extract_chain_A(cif_pre_path, A_chain_path)
+            template_to_json[0]["mmcif"] = _read_file(pathlib.Path(A_chain_path), pathlib.Path(json_path))
             input_json['sequences'][0]['protein']['templates'] = template_to_json
         with open(json_path, 'w') as f:
             json.dump(input_json, f, indent=2)
@@ -629,12 +816,12 @@ def process_single_pdb(pdb_file: str,
         success = run_alphafold3(json_path, pkl_path, target_dir, ref_time_steps=str(ref_time_steps), num_samples=str(num_samples))
         
         if success:
+            tag = f"{tag}".lower()
             cif_path = os.path.join(target_dir, tag.replace(".pdb", ""), 
                                   tag.replace(".pdb", "") + "_model.cif")
             confidence_path = os.path.join(target_dir, tag.replace(".pdb", ""), 
                                          tag.replace(".pdb", "") + "_summary_confidences.json")
-            
-
+            print(cif_path,tag)
             af3_metrics = process_confidence_metrics(confidence_path, cif_path, copied_file)
             metrics.update(af3_metrics)
 
@@ -642,10 +829,10 @@ def process_single_pdb(pdb_file: str,
             if convert_cif_to_pdb(cif_path, pdb_output):
                 return metrics, pdb_output
             else:
-                print(f"convert faield")
+                print(f"convert failed")
                 return metrics, copied_file
         else:
-            print(f"AF error")
+            print(f"AF3 error")
             metrics['AF3_Status'] = 'Failed'
             return metrics, copied_file
             
@@ -663,16 +850,16 @@ def main():
     
     if not os.path.exists(args.template_path):
         raise FileNotFoundError(f"Template file {args.template_path} not found!")
-    
+
     mpnn_model, mpnn_config_dict, prediction_model, af2_setting = self_consistency_init(args.alphafold,args.num_seqs)
     
     with open(args.pdb_list, 'r') as f:
         pdb_files = [line.strip() for line in f if line.strip()]
-    
+
     csv_path = os.path.join(args.output_dir, 'processing_results.csv')
-    lock_path = f"{csv_path}.lock" 
+    lock_path = f"{csv_path}.lock"  
     lock = FileLock(lock_path)
-    
+
     all_results = []
     for pdb_file in pdb_files:
         print(f"\nProcessing {pdb_file}...")
@@ -701,21 +888,22 @@ def main():
                     args.template_plddt_threshold,
                     args.reconstruct,
                     args.fake_msa,
-                    run_af3=not is_last_cycle  
+                    args.multimer,
+                    args.ddg, 
+                    run_af3=not is_last_cycle 
                 )
                 all_results.append(metrics)
-                current_input = next_input  
+                current_input = next_input 
                 
                 print(f"  Cycle {cycle+1} completed:")
                 print(f"    AF2 RMSD: {metrics['AF2_RMSD']:.3f}")
                 print(f"    AF2 pLDDT: {metrics['AF2_pLDDT']:.3f}")
                 print(f"    AF3 Status: {metrics['AF3_Status']}")
                 if metrics['AF3_Status'] == 'Success':
-                    print(f"    AF3 PTM: {metrics['AF3_PTM']:.3f}")
-                    print(f"    AF3 pLDDT: {metrics['AF3_pLDDT']:.3f}")
-                    print(f"    AF3_rmsd: {metrics['AF3_rmsd']:.3f}")
-                    
-                        
+                    print(f"  AF3 PTM: {metrics['AF3_PTM']:.3f}")
+                    print(f"  AF3 pLDDT: {metrics['AF3_pLDDT']:.3f}")
+                    print(f"  AF3_rmsd: {metrics['AF3_rmsd']:.3f}")
+
                 with lock:
                     file_exists = os.path.exists(csv_path)
                     pd.DataFrame([metrics]).to_csv(csv_path, mode='a', header=not file_exists, index=False)

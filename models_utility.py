@@ -1,6 +1,6 @@
 import os
-from data.op_utility import read_protein_info_from_copied_file, filter_protein_info,residue_to_str,smiles_to_mmcif,cdr_process,find_all_sequence_residues_in_pdb, random_protein_sequence
-from eval.evaluation import run_mpnn_evaluation, self_consistency_af3, get_fake_msa ,process_confidence_metrics,process_confidence_metrics_protenix,self_consistency_protenix,read_pdb_to_atom_array,extract_coordinates
+from data.op_utility import read_protein_info_from_copied_file, filter_protein_info,residue_to_str,cdr_process,find_all_sequence_residues_in_pdb, random_protein_sequence
+from eval.evaluation import run_mpnn_evaluation, self_consistency_af3, get_fake_msa ,process_confidence_metrics_af3,process_confidence_metrics_protenix,self_consistency_protenix,read_pdb_to_atom_array,extract_coordinates
 import copy
 from typing import Dict, List, Tuple
 import shutil
@@ -61,28 +61,27 @@ def af3_op_af3_eval(pdb_file: str,
         metrics['file_name'] = pdb_file
         copied_file = os.path.join(target_dir, metrics['file_name']+f"_recycle_{cycle+1}.pdb")
         chain_number_list = []
-        if cdr and cycle==0:
+        if cdr and cycle == 0:
             chain_number_list = cdr_process(cdr, source_file, copied_file)
 
-        elif cdr and cycle>0:
+        elif cdr and cycle > 0:
             chain_number_list = chain_number_list_cdr
             shutil.copy(source_file, copied_file)
         else:
             shutil.copy(source_file, copied_file)
         chain_number_list_cdr = copy.deepcopy(chain_number_list)
         metrics["oringin_path"] = os.path.join(output_dir, "recycle_1", metrics['file_name']+"_recycle_1.pdb")
-        # for fixed chains and residues, fixed res will be recognized as plldt_good res to fix
-        plddt_good_indicates = []
-        plddt_atoms_indicates = []
+        # for fixed chains and residues, fixed res will be recognized as fixed_residues_for_MPNN to fix
+        fixed_residues_for_MPNN = []
         print(chain_number_list)
         protein_info = read_protein_info_from_copied_file(copied_file)
         if framework_seq:
-            print(f"framework_seq {framework_seq}")
+            print(f"framework seq {framework_seq}, which will be fixed during design")
             framework_to_fix = find_all_sequence_residues_in_pdb(copied_file,framework_seq)
             fixed_residues = framework_to_fix
         filtered_info = filter_protein_info(protein_info, fixed_chains, fixed_residues,chain_number_list)
-
-        plddt_good_indicates = [
+        # fixed_residues_for_MPNN save the all fixed residues
+        fixed_residues_for_MPNN = [
             f"{chain}{residue_to_str(res.id)}"
             for chain, residues in filtered_info.items()
             for res in residues
@@ -98,6 +97,7 @@ def af3_op_af3_eval(pdb_file: str,
                                   tag_pre.replace(".pdb", "") + "_model.cif")
         
         pocket_res = []
+        # we use the pocket res form the input structure to define the residues around ligand which we will use LigandMPNN to design
         if  sm  or dna or rna:
             pocket_res =  find_pocket_residues_based_on_distance(pdbfile=copied_file ,cutoff=8.0)
             print(len(pocket_res))
@@ -108,26 +108,23 @@ def af3_op_af3_eval(pdb_file: str,
             for result in template_to_json:
                 chain_id = result['chain']
                 indices = result['queryIndices']
-                print(chain_id)
-                print(indices)
                 converted = [f"{chain_id}{index + 1}" for index in indices]  # Adjust indices (+1)
                 # pockets res fix should has two requiments: plddt good and has paired-wise energy between LIG
                 
-                plddt_good_indicates +=  converted
-                result['queryIndices'] = [int(indic[1:])-1 for indic in plddt_good_indicates if indic[0]==chain_id]
+                fixed_residues_for_MPNN +=  converted
+                result['queryIndices'] = [int(indic[1:])-1 for indic in fixed_residues_for_MPNN if indic[0]==chain_id]
                 result['templateIndices'] = result['queryIndices']
 
-        paired = []
-        print("plddt_good_protein_indicates", plddt_good_indicates)
+        print("plddt_good_protein_indicates", fixed_residues_for_MPNN)
         
-        metrics["plddt_good_indicates_len"] = len(plddt_good_indicates) 
+        metrics["fixed_residues_for_MPNN_len"] = len(fixed_residues_for_MPNN) 
         mpnn_dir=copied_file.replace(".pdb","_mpnn_eval")
-        ccd_LG = None
+
 
         metrics = run_mpnn_evaluation(copied_file,
                                       mpnn_model,
                                     mpnn_config_dict,
-                                    plddt_good_indicates,
+                                    fixed_residues_for_MPNN,
                                     pocket_res,
                                     mpnn_dir,
                                     symmetry_residues,
@@ -151,7 +148,6 @@ def af3_op_af3_eval(pdb_file: str,
                 AF3_sm_dir,
                 template_path_for_eval,
                 sm,
-                ccd_LG,
                 ccd,
                 dna,
                 rna,
@@ -159,7 +155,7 @@ def af3_op_af3_eval(pdb_file: str,
                 chain_types,
                 pocket_res,
                 fixed_chains,
-                plddt_good_indicates,
+                fixed_residues_for_MPNN,
                 cyclic,
                 replace_MSA,
                 metrics
@@ -179,7 +175,6 @@ def af3_op_af3_eval(pdb_file: str,
         copied_file = metrics[0]["packed_path"] 
         input_json = template.copy()
         input_json['name'] = tag.replace(".pdb", "")
-        # ! to do should allow multi-ccd
         
         count = 0
         sm_count = 0
@@ -191,7 +186,7 @@ def af3_op_af3_eval(pdb_file: str,
             if chain == "protein":
                 if chain_labels[protein_count] not in fixed_chains:
                     if random_init and cycle == 0:
-                        input_json['sequences'][count]['protein']["sequence"] = random_protein_sequence(get_chain_sequence(copied_file,chain_labels[protein_count]),plddt_good_indicates, chain_labels[protein_count])
+                        input_json['sequences'][count]['protein']["sequence"] = random_protein_sequence(get_chain_sequence(copied_file,chain_labels[protein_count]),fixed_residues_for_MPNN, chain_labels[protein_count])
                     else:
                         input_json['sequences'][count]['protein']["sequence"] = get_chain_sequence(copied_file,chain_labels[protein_count])
                     print(input_json['sequences'][count]['protein']["sequence"])
@@ -212,6 +207,7 @@ def af3_op_af3_eval(pdb_file: str,
             
         count_tuple = [count,protein_count,sm_count,rna_count,dna_count]
         input_json["modelSeeds"] = get_random_seeds(num_seeds)
+        # use the previous MSA but replace the query sequence
         if replace_MSA:
             #msa=f'>query\n{input_json["sequences"][chain]["protein"]["sequence"]}\n'
             #originMSA = input_json['sequences'][chain]['protein']["unpairedMsa"]
@@ -244,6 +240,12 @@ def af3_op_af3_eval(pdb_file: str,
             # update input_json
             input_json['sequences'][0]['protein']['unpairedMsa'] = '\n'.join(msa_lines) + '\n'
 
+
+        # NOTE:
+        # This feature was implemented to explore MSA influence.
+        # After evaluation, it was found to bring limited benefit,
+        # so it is currently not used in the main pipeline.
+        # use the previous step cif file to make fake msa 
         if fake_msa and cycle >=1:
             seeds_path = os.path.join(previous_dir, tag_pre.replace(".pdb", ""))
             subfolder = os.path.join(seeds_path, "all_samples")
@@ -251,7 +253,6 @@ def af3_op_af3_eval(pdb_file: str,
                 os.path.abspath(os.path.join(subfolder, f))  
                 for f in os.listdir(subfolder)  
                 if os.path.isfile(os.path.join(subfolder, f)) and f.endswith(".cif")  
-
             ]
             for chain in range(0,protein_count):
                 if  chain_labels[chain] not in fixed_chains:
@@ -263,6 +264,12 @@ def af3_op_af3_eval(pdb_file: str,
                     input_json['sequences'][chain]['protein']["unpairedMsa"] = msa
             for cif_file in cif_files:
                 os.remove(cif_file)
+
+        # NOTE:
+        # This feature was implemented to explore template influence.
+        # After evaluation, it was found to bring limited benefit,
+        # so it is currently not used in the main pipeline.
+        # use the previous step cif file to make fake template 
         if template_plddt_threshold > 0 and cycle >=1:
             chain_id_path = split_cif_by_chain(cif_pre_path, os.path.join(previous_dir, tag_pre.replace(".pdb", "")),fixed_chains)
             _to_count = 0
@@ -271,14 +278,14 @@ def af3_op_af3_eval(pdb_file: str,
                 del template_to_json[_to_count]["chain"]
                 input_json['sequences'][_to_count]['protein']['templates'] = [template_to_json[_to_count]]
                 _to_count += 1
-        if paired:
-            input_json["bondedAtomPairs"] = paired
+
         with open(json_path, 'w') as f:
             json.dump(input_json, f, indent=2)
         
         # pkl_process
         insert = None
         if ptm:
+            # More PTM types are needed. We usually add a new ligand chain that is covalently bound to the protein.
             print(f"ptm {ptm}")
             if ptm[1] =="P":
                 global_index, chain_name, residue_info = get_global_residue_index(copied_file,ptm[0])
@@ -303,6 +310,7 @@ def af3_op_af3_eval(pdb_file: str,
                                             cyclic=cyclic,
                                             num_samples=num_samples)
         elif cycle == 0 and random_init:
+            print("pure prediction")
             results_op= AF3Designer_model.single_file_process(json_path=json_path,
                                               out_dir=target_dir,
                                             ref_pdb_path=None,
@@ -323,7 +331,7 @@ def af3_op_af3_eval(pdb_file: str,
             cif_path = os.path.join(target_dir, tag.replace(".pdb", ""), 
                                   tag.replace(".pdb", "") + "_model.cif")
             
-            metrics = process_confidence_metrics(results_op,
+            metrics = process_confidence_metrics_af3(results_op,
                                                      cif_path, copied_file,
                                                      metrics[0]["oringin_path"],
                                                      metrics,
@@ -340,7 +348,7 @@ def af3_op_af3_eval(pdb_file: str,
                 return metrics, copied_file,chain_number_list_cdr
         else:
             print(f"AF3 failed, keep old file to go on")
-            metrics['AF3_Status'] = 'Failed'
+            metrics['HalluDesign_Status'] = 'Failed'
             return metrics, copied_file,chain_number_list_cdr
             
     except Exception as e:
@@ -364,19 +372,15 @@ try:
                       mpnn_config_dict,
                       Designer_model,
                       ref_time_steps,
-                      num_samples,
-                      num_seeds,
                       ref_eval,
                       chain_types,
                       fixed_chains,
                       fixed_residues,
                       bais_per_residues,
                       metrics,
-                      ptm,
                       symmetry_residues,
                       symmetry_chains,
                       sm ,
-                      ccd,  
                       dna,
                       rna,
                       cdr,
@@ -412,19 +416,18 @@ try:
                 shutil.copy(source_file, copied_file)
             chain_number_list_cdr = copy.deepcopy(chain_number_list)
             metrics["oringin_path"] = os.path.join(output_dir, "recycle_1", metrics['file_name']+"_recycle_1.pdb")
-            # for fixed chains and residues, fixed res will be recognized as plldt_good res to fix
-            plddt_good_indicates = []
-            plddt_atoms_indicates = []
+            # for fixed chains and residues, fixed res will be recognized as fixed_residues_for_MPNN res to fix
+            fixed_residues_for_MPNN = []
             print(chain_number_list)
             protein_info = read_protein_info_from_copied_file(copied_file)
             if framework_seq:
                 print(f"framework_seq {framework_seq}")
                 framework_to_fix = find_all_sequence_residues_in_pdb(copied_file,framework_seq)
                 fixed_residues = framework_to_fix
-            print(fixed_residues)
+
             filtered_info = filter_protein_info(protein_info, fixed_chains, fixed_residues,chain_number_list)
 
-            plddt_good_indicates = [
+            fixed_residues_for_MPNN = [
                 f"{chain}{residue_to_str(res.id)}"
                 for chain, residues in filtered_info.items()
                 for res in residues
@@ -433,32 +436,20 @@ try:
             if symmetry_chains:
                 symmetry_residues = generate_cross_chain_symmetry(protein_info, symmetry_chains)
 
-            tag_pre = f"{metrics['file_name']}_recycle_{cycle}".lower()
-            # for msa and templates embedding recycle
-            previous_dir = os.path.join(output_dir, f"recycle_{cycle}")
-            cif_pre_path = os.path.join(previous_dir,tag_pre,"seed_123","predictions",f"{tag_pre}_seed_123_sample_0.cif")
-
             pocket_res = []
+            # we use the pocket res form the input structure to define the residues around ligand which we will use LigandMPNN to design
             if  sm  or dna or rna:
                 pocket_res =  find_pocket_residues_based_on_distance(pdbfile=copied_file ,cutoff=8.0)
-                print(len(pocket_res))
+                print("pocket residues: "+ f"{len(pocket_res)}")
 
-            paired = []
-            print("plddt_good_protein_indicates", plddt_good_indicates)
+            print("fixed residues for MPNN", fixed_residues_for_MPNN)
 
-            metrics["plddt_good_indicates_len"] = len(plddt_good_indicates) 
+            metrics["fixed_residues_for_MPNN_len"] = len(fixed_residues_for_MPNN) 
             mpnn_dir=copied_file.replace(".pdb","_mpnn_eval")
-            ccd_codes =  None
-            ccd_LG = None
-            if ccd and sm:
-                ccd_LG=smiles_to_mmcif(sm[0], molecule_id='LIG1',molecule_name='LIG1')
-
-                print(ccd_LG)
-                ccd_codes=["LIG1"]
             metrics = run_mpnn_evaluation(copied_file,
                                           mpnn_model,
                                         mpnn_config_dict,
-                                        plddt_good_indicates,
+                                        fixed_residues_for_MPNN,
                                         pocket_res,
                                         mpnn_dir,
                                         symmetry_residues,
@@ -470,8 +461,8 @@ try:
             print(f"design begin {design_begin}")       
             if design_begin:
                 print("protenix evaluation")
-                AF3_sm_dir=copied_file.replace(".pdb","af3_eval")
-                os.makedirs(AF3_sm_dir, exist_ok=True)
+                Eval_protenix_dir=copied_file.replace(".pdb","protenix_eval")
+                os.makedirs(Eval_protenix_dir, exist_ok=True)
                 if template_for_eval:
                     template_path_for_eval = template_for_eval
                 else:
@@ -479,25 +470,23 @@ try:
                 metrics = self_consistency_protenix(
                     scaffold_path=copied_file,
                     AF3Designer_model=Designer_model,
-                    output_dir=AF3_sm_dir,
+                    output_dir=Eval_protenix_dir,
                     template_path=template_path_for_eval,
                     sm=sm,
-                    ccd_LG=ccd_LG,
-                    ccd_codes=ccd_codes,
                     dna=dna,
                     rna=rna,
                     ref_eval=ref_eval,
                     chain_types=chain_types,
                     pocket_res=pocket_res,
                     fixed_chains=fixed_chains,
-                    plddt_good_indicates=plddt_good_indicates,
+                    fixed_residues_for_MPNN=fixed_residues_for_MPNN,
                     cyclic=cyclic,
                     metrics=metrics,
                     random_init=random_init
                 )
 
             else:
-                print("no af3 prediction")
+                print("no protenix evaluation")
 
             # for last cycle no optimzie
             if not run_af3:
@@ -512,10 +501,8 @@ try:
             if isinstance(Designer_model, ProtenixInferrer):
                 print("Designer_model is ProtenixInferrer.")
                 # Prepare to run Protenix
-
                 input_json[0]['name'] = tag.replace(".pdb", "")
                 # ! to do should allow multi-ccd
-
                 count = 0
                 sm_count = 0
                 rna_count = 0 
@@ -523,16 +510,13 @@ try:
                 protein_count = 0
                 chain_labels = string.ascii_uppercase[:10] 
                 for chain in chain_types:
-                    print(chain)
                     if chain == 'protein':
                         if chain_labels[protein_count] not in fixed_chains:
                             if random_init and cycle == 0:
-                                print(get_chain_sequence(copied_file,chain_labels[protein_count]))
-                                input_json[0]['sequences'][count]['proteinChain']["sequence"]  = random_protein_sequence(get_chain_sequence(copied_file,chain_labels[protein_count]),plddt_good_indicates, chain_labels[protein_count])
+                                input_json[0]['sequences'][count]['proteinChain']["sequence"]  = random_protein_sequence(get_chain_sequence(copied_file,chain_labels[protein_count]),fixed_residues_for_MPNN, chain_labels[protein_count])
                             else:
                                 input_json[0]['sequences'][count]['proteinChain']["sequence"] = get_chain_sequence(copied_file,chain_labels[protein_count])
                             protein_count +=1
-                            print(input_json[0]['sequences'][count]['proteinChain']["sequence"])
 
                     if chain == 'ligand':
                         input_json[0]['sequences'][count]["ligand"]["ligand"] = sm[sm_count]
@@ -541,16 +525,13 @@ try:
                     if chain == 'dna':
                         input_json[0]['sequences'][count]["dnaSequence"]["sequence"] = dna[sm_count]
                         dna_count +=1
-                    print(rna)
+
                     if chain == 'rna':
                         input_json[0]['sequences'][count]["rnaSequence"]["sequence"] = rna[rna_count]
-                        print(rna[rna_count])
                         rna_count +=1
                     count += 1
                 count_tuple = [count,protein_count,sm_count,rna_count,dna_count]
 
-                if paired:
-                    input_json["bondedAtomPairs"] = paired
                 with open(json_path, 'w') as f:
                     json.dump(input_json, f, indent=2)
 
@@ -559,23 +540,6 @@ try:
                 atom_array = read_pdb_to_atom_array(copied_file)
                 pred_coordinates_tensor = extract_coordinates(atom_array, as_tensor=True)
                 print(pred_coordinates_tensor.shape)
-                #if ptm:
-                #    num_points = 10
-                #    residues = ptm.split()
-                #    chain = residues[0][0]  
-                #    residue_ids = [int(res[1:-1]) for res in residues]  
-                #    gaussian_std_dev = 2.0 # Adjust this to make the Gaussian more spread out or concentrated
-#   
-                #    # Step 3: Generate Gaussian sampled points
-                #    gaussian_points = generate_gaussian_from_residues(
-                #        atom_array,
-                #        chain,
-                #        residue_ids,
-                #        num_points,
-                #        std_dev=gaussian_std_dev,
-                #        as_tensor=True
-                #    )
-                #    print(gaussian_points.shape)
 
                 torch.save(pred_coordinates_tensor,pkl_path)
                 if cycle == 0 and random_init:
@@ -604,7 +568,6 @@ try:
                 if results_op:
                     # get Protenix output path
                     cif_path = os.path.join(target_dir,tag,"seed_123","predictions",f"{tag}_seed_123_sample_0.cif")
-                    print(cif_path)
                     metrics = process_confidence_metrics_protenix(results_op,
                                                              cif_path, copied_file,
                                                              metrics[0]["oringin_path"],
@@ -614,7 +577,6 @@ try:
                                                              fixed_chains,
                                                              count_tuple)
                     pdb_output = cif_path.replace(".cif", ".pdb")
-                    print(pdb_output)
                     # Convert CIF to PDB for the next iteration
 
                     if convert_cif_to_pdb(cif_path, pdb_output):
@@ -625,7 +587,7 @@ try:
 
                 else:
                     print("Protenix processing failed; continuing with the original file")
-                    metrics['AF3_Status'] = 'Failed'
+                    metrics['Protenix_Status'] = 'Failed'
                     return metrics, copied_file,chain_number_list_cdr
 
         except Exception as e:

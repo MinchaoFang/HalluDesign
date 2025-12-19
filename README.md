@@ -5,12 +5,14 @@ HalluDesign, a hallucination-driven all-atom framework for the iterative co-opti
 # RUN HalluDesign
 ## Basic Command
 
+Development and exploratory implementations are available in the `dev` branch.
+
 More examples can check in examples/
 ```
 python HalluDesign_run.py 
 --input_file <pdbfile> or --pdb_list <pdblist>
 --output_dir <outdir> 
---prediction_model <af3 or protenix> 
+--HalluDesign_model <af3 or protenix> 
 --template_path <af3 json or protenix json>
 --ref_time_steps <HalluDesign diffusion steps, 50 for local optimization, 150 for global optimization and design>
 --num_seqs <num sequences per cycle>
@@ -26,7 +28,6 @@ Binder design: target should contain MSA and Templates which are in AF3 standard
 PTM binder design requires that the json contains a defined post-translational modifications.
 ###
 
-
 ###
 
 # Installation
@@ -36,7 +37,7 @@ Protenix checkpoints will be downloaded automatically the first time the program
 
 ## Singularity
 
-For those can use Singularity, we offer singularity sif file at here.
+For those can use Singularity, we offer singularity sif file at here. But you also needs compile a AF3 cpp file.
 ```
 https://doi.org/10.5281/zenodo.17789892
 ```

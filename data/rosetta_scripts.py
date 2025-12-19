@@ -1,5 +1,6 @@
-
-
+from data.utility import find_pocket_residues_based_on_distance
+# this is for determining pocket residues based on rosetta
+# however it doesnot make much difference compared to no sqeuence selection 
 def find_target_heavyatoms(pose, target_resno):
     tgt_res = pose.residue(target_resno)
     print(f"Finding target heavyatoms for residue {target_resno}")

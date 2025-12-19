@@ -60,7 +60,6 @@ def generate_cross_chain_symmetry(protein_info, symmetry_chains):
     if len(set(res_counts)) > 1:
         raise ValueError(f"Number of residues in symmetric chains is inconsistent: {res_counts}")
     
-
     num_groups = res_counts[0]
     groups = []
     for idx in range(num_groups):
@@ -87,8 +86,6 @@ def calculate_weights(residue_groups):
     return weights
     
 
-
-
 def convert_cif_to_pdb(cif_file, pdb_file):
     """
     convert CIF to PDB, modify resnameLIG_B to LIG
@@ -99,6 +96,14 @@ def convert_cif_to_pdb(cif_file, pdb_file):
         "ILE", "LEU", "LYS", "MET", "PHE", "PRO", "SER", "THR", "TRP", 
         "TYR", "VAL", "ASX", "GLX", "PYR", "SEC", "SEL", "XLE", "XAA"
     ]
+    nucleic_acids = [
+        # DNA
+        "DA", "DT", "DG", "DC",
+        # RNA
+        "A", "U", "G", "C", "I"
+    ]
+
+    valid_residues = set(amino_acids + nucleic_acids)
     try:
 
         parser = MMCIFParser(QUIET=True)
@@ -109,8 +114,8 @@ def convert_cif_to_pdb(cif_file, pdb_file):
                 for residue in chain:
                     resname = residue.get_resname()
 
-                    if resname not in amino_acids:  
-                        residue.resname = "LIG"  # modify resname for further process 
+                    if resname not in valid_residues:  
+                        residue.resname = "LIG"  # modify resname for further RMSD process 
         
         io = PDBIO()
         io.set_structure(structure)
@@ -122,7 +127,8 @@ def convert_cif_to_pdb(cif_file, pdb_file):
         print(f"convert failed, {str(e)}")
         return False
 
-
+# NOTE:
+# this is about how to convert cif to templates which AF3 can recoginize based on last step pLDDT value
 def template_process(cif_path, plddt_threshold=70,min_continuous_length=5):
     # Read the CIF file using MMCIF2Dict
 
@@ -205,6 +211,8 @@ def template_process(cif_path, plddt_threshold=70,min_continuous_length=5):
     
     return results
 
+# NOTE
+# we try to define which atom can be fixed during design, got no benefit
 def atoms_templates_process(cif_path, plddt_threshold):
     # Read the CIF file using MMCIF2Dict
     mmcif_dict = MMCIF2Dict(cif_path)
@@ -263,7 +271,7 @@ def atoms_templates_process(cif_path, plddt_threshold):
 
 import json
 
-def count_chain_based_on_json(data):
+def count_chain_based_on_json_af3(data):
     protein_chains = 0
 
     ligand_chains = 0
@@ -357,6 +365,8 @@ def count_chain_based_on_json_protenix(data):
 
     return protein_chains, ligand_chains, dna_chains, rna_chains, chain_types
 
+# NOTE
+# We try to use Pyrosetta to select pocket residues seqeunces, but got limited benefit
 class interact_fix_analyze():
     def __init__(self, params_file=None,
                  ddg_chains_1=('A'),
@@ -675,7 +685,7 @@ def calculate_rmsd_from_coordinates(coords1, coords2, atom_map):
     rmsd = np.sqrt(np.sum(squared_diff) / len(atom_map))
     return rmsd,atom_centre_distance
 
-
+# based on smiles mapping, we calculate rmsd between two files
 def align_molecules_from_pdb_files(smiles, pdb_file1, pdb_file2):
     # Create reference molecule from SMILES
     ref_mol = Chem.MolFromSmiles(smiles)
