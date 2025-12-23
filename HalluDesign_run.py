@@ -74,6 +74,8 @@ def parse_arguments():
                        help='Path to AF3 template.json file, it should be really careful to treat with')
     parser.add_argument('--template_for_eval', type=str, required=False, 
                        help='Path to AF3 template.json file only for eval')
+    parser.add_argument('--extra_json_path', type=str, required=False, 
+                       help='Path to AF3 template.json file only for cross model')       
     parser.add_argument('--HalluDesign_model', type=str,  required=True,
                        help='af3 or Protenix')
     parser.add_argument('--ref_eval', action='store_true', default=False,
@@ -215,7 +217,7 @@ def main():
         Designer_model = AF3DesignerPack(jax_compilation_dir=os.path.join(args.output_dir,"jax_compilation_cache_dir"))
         protein_chains, ligand_chains, dna_chains, rna_chains, chain_types =  count_chain_based_on_json_af3(args.template_path)
         metrics = generate_metrics(protein_chains,ligand_chains, dna_chains, rna_chains,chain_types)
-    if args.HalluDesign_model  == "protenix":
+    if args.HalluDesign_model  == "protenix" or args.HalluDesign_model == "cross_model":
         #sys.path.insert(0,os.path.join(current_dir,"Protenix"))
         from runner.inference import ProtenixInferrer
         os.environ["LAYERNORM_TYPE"] = "fast_layernorm"
@@ -353,7 +355,39 @@ def main():
                     random_init=args.random_init,
                     run_af3=not is_last_cycle
                 )
-
+                elif args.HalluDesign_model  == "cross_model":
+                    metrics, next_input, chain_number_list_cdr = cross_model_op_protenix_eval(
+                    pdb_file=current_input,
+                    cycle=cycle,
+                    output_dir=args.output_dir,
+                    template_path=args.template_path,
+                    template_for_eval=args.template_for_eval,
+                    extra_json_path=args.extra_json_path,
+                    mpnn_model=mpnn_model,
+                    mpnn_config_dict=mpnn_config_dict,
+                    Designer_model=Designer_model,
+                    ref_time_steps=args.ref_time_steps,
+                    ref_eval=args.ref_eval,
+                    chain_types=chain_types,
+                    fixed_chains=fixed_chains,
+                    fixed_residues=fixed_residues,
+                    bais_per_residues=bais_per_residues,
+                    metrics=metrics,
+                    symmetry_residues=args.symmetry_residues,
+                    symmetry_chains=args.symmetry_chains,
+                    sm=args.sm,
+                    dna=args.dna,
+                    rna=args.rna,
+                    cdr=args.cdr,
+                    framework_seq=args.framework_seq,
+                    evaluator=evaluator,
+                    design_begin=design_begin,
+                    chain_number_list_cdr=chain_number_list_cdr,
+                    cyclic=args.cyclic,
+                    ptm=args.ptm,
+                    random_init=args.random_init,
+                    run_af3=not is_last_cycle
+                )
                 all_results.append(metrics)
                 current_input = next_input  # update for next cycle
 

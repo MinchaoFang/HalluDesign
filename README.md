@@ -18,7 +18,7 @@ python HalluDesign_run.py
 --num_seqs <num sequences per cycle>
 --design_epoch_begin <number_of_initial_cycles_to_skip>
 --mpnn <ligand_mpnn or protein_mpnn>
---random_init # for from scratch design
+--random_init # for from scratch design, this will random init all redesign residues
 ```
 ###
 You need to prepare a json file which serve your purpose, protein chain to design should be put in Chain A.
@@ -69,7 +69,7 @@ mamba install -c conda-forge gcc=12 gxx=12
 ### Install HalluDesign
 ```
 pip install torch==2.6.0 torchaudio==2.6.0 torchvision==0.21.0  biopython==1.79 prody==2.4.1 pandas==2.2.3  -f https://download.pytorch.org/whl/cu126
-pip install ml-collections==0.1.1 transformers==4.50.0 fair-esm==2.0.0 triton==3.1.0 numpy==1.26.3
+pip install ml-collections==0.1.1 transformers==4.50.0 triton==3.1.0 numpy==1.26.3
 cd LigandMPNN
 bash get_model_params.sh "./model_params"
 ```
@@ -141,7 +141,7 @@ git clone https://github.com/MinchaoFang/CoDP.git
 # Licence and Disclaimer
 
 ## HalluDesign
-Halludesign all code are under [MIT license](https://github.com/MinchaoFang/HalluDesign/blob/main/LICENSE) 
+HalluDesign all code are under [MIT license](https://github.com/MinchaoFang/HalluDesign/blob/main/LICENSE) 
 
 ## AlphaFold 3 Source Code and Model Parameters
 
