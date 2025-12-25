@@ -1,8 +1,12 @@
 # Protein Monomer optmization exmample
 ## AF3
 export PATH=$(python -c "import site; print(site.getsitepackages()[0] + '/nvidia/cuda_nvcc/bin')"):$PATH && python ./HalluDesign_run.py --HalluDesign_model af3 --input_file examples/monomer/monomer.pdb --template_path examples/monomer/template_und.json --mpnn "protein_mpnn" --output_dir $(pwd)/examples/monomer/HalluDesign_op --num_seqs 2 --num_recycles 10 --ref_time_steps 50
+
 ## Protenix
 export CC=$(which gcc) && export CXX=$(which g++) && python ./HalluDesign_run.py --HalluDesign_model protenix --input_file examples/monomer/monomer.pdb --template_path examples/monomer/template_und_protenix.json  --mpnn "protein_mpnn" --output_dir $(pwd)/examples/monomer/HalluDesign_op --num_seqs 2 --num_recycles 10 --ref_time_steps 50
+
+## Cross model
+module load mathlib/cuda/cuda_12.3.2_545.23.08_linux && python ./HalluDesign_run.py --HalluDesign_model cross_model --input_file examples/monomer/monomer.pdb --template_path examples/monomer/template_und_protenix.json  --extra_json_path examples/monomer/template_und.json --mpnn "protein_mpnn" --output_dir $(pwd)/examples/monomer/HalluDesign_op --num_seqs 2 --num_recycles 10 --ref_time_steps 50 --design_epoch_begin 8
 
 # Protein binder optmization exmample
 export PATH=$(python -c "import site; print(site.getsitepackages()[0] + '/nvidia/cuda_nvcc/bin')"):$PATH && python ./HalluDesign_run.py --HalluDesign_model af3 --input_file examples/protein_binder/Pdl1_binder_design_5.pdb --template_path examples/protein_binder/pdl1_protein.json --mpnn "protein_mpnn" --output_dir $(pwd)/examples/protein_binder/HalluDesign_op --fix_chain_index "B" --num_seqs 2 --num_recycles 10 --ref_time_steps 50 
@@ -27,3 +31,4 @@ export PATH=$(python -c "import site; print(site.getsitepackages()[0] + '/nvidia
 export PATH=$(python -c "import site; print(site.getsitepackages()[0] + '/nvidia/cuda_nvcc/bin')"):$PATH && python ./HalluDesign_run.py --HalluDesign_model af3 --input_file examples/cyclic_peptide/PDL1_cyclic_peptide.pdb --template_path examples/protein_binder/pdl1_protein.json --mpnn "protein_mpnn" --output_dir $(pwd)/examples/cyclic_peptide/HalluDesign_design --fix_chain_index "B" --num_seqs 2 --num_recycles 30 --design_epoch_begin 20 --ref_time_steps 150 --cyclic 1 --random_init
 
 # CoDP empowered ligand binder design example
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True && export CC=$(which gcc) && export CXX=$(which g++) && python ./HalluDesign_run.py --HalluDesign_model protenix --input_file examples/ligand_binder/protein_ligand.pdb --template_path examples/ligand_binder/template_sm_protenix.json --mpnn "ligand_mpnn" --sm "C1[C@@H]2[C@H]([C@H]([C@@H](O2)N3C=NC4=C(N=CN=C43)N)O)OP(=O)(O1)O" --output_dir $(pwd)/examples/ligand_binder/HalluDesign_op --num_seqs 2 --num_recycles 10 --ref_time_steps 50 --CoDP

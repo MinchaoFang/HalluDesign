@@ -664,6 +664,7 @@ def run_mpnn_evaluation(scaffold_path,
                 original_length_sequences = run_selection_process(
                     sequences, packed_paths, evaluator, scaffold_path, num_seqs, batchsize,
                 )
+                print_cuda_memory_usage()
                 print(f"✅ Successfully ran with batchsize: {batchsize}")
                 break  # Break loop on success
             except Exception as e:
@@ -785,7 +786,7 @@ def run_selection_process(sequences, packed_paths, evaluator, scaffold_path, num
         
         final_results.append((seq, packed, final_score))
     # The final results still need to be sorted by score in descending order (even if they were already sorted in the loop)
-    final_results.sort(key=lambda x: -x[5])
+    final_results.sort(key=lambda x: -x[2])
     
     print(f"Final filtering complete, remaining sequence count: {len(final_results)}")
     end_time = time.time()
@@ -1195,9 +1196,7 @@ class CoDP():
         #for _ in pdb_path:
         #    backbone = extract_pdb_info(_)
         #    backbone_array.append(backbone)
-        print(pdb_path)
         backbone = extract_pdb_info(pdb_path)
-        print(backbone.shape)
         backbone_with_batch = np.expand_dims(backbone, axis=0)  # Add a dimension at axis 0, transforming the shape to (1, L, 3, 3)
         backbone_with_batch = np.repeat(backbone_with_batch, len(sequneces), axis=0)  # Repeat this dimension 'batch_size' times, transforming it to (batch_size, L, 3, 3)
         backbone_with_batch = torch.tensor(backbone_with_batch, dtype=torch.float32)
