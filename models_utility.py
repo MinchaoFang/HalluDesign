@@ -890,29 +890,30 @@ try:
                     run_AF3_evaluation_with_ref_eval(output_dir,
                                                     json_path,
                                                     None, 
-                                                    cyclic, 
                                                     dump_result, 
-                                                    ref_time_steps, 5)
+                                                    ref_time_steps, 5,
+                                                    cyclic, )
                 elif cycle == 0 and random_init:
                     print("pure prediction")
                     run_AF3_evaluation_with_ref_eval(output_dir,
                                                     json_path,
                                                     None, 
-                                                    cyclic, 
                                                     dump_result, 
-                                                    ref_time_steps, 5)
+                                                    ref_time_steps, 5,
+                                                    cyclic, )
                 else:
                     run_AF3_evaluation_with_ref_eval(output_dir,
                                                     json_path,
                                                     pkl_path, 
-                                                    cyclic, 
                                                     dump_result, 
-                                                    ref_time_steps, 5)
+                                                    ref_time_steps, 5,
+                                                    cyclic, )
                 
-                with open(pkl_path, "rb") as f:
-                    model_inference = pickle.load(f)
+                with open(dump_result, "rb") as f:
+                    results_op = pickle.load(f)
 
-                if model_inference:
+                if results_op:
+                    
                     # get output path
                     tag =f"{tag}".lower()
                     cif_path = os.path.join(target_dir, tag.replace(".pdb", ""), 
@@ -927,6 +928,7 @@ try:
                                                              fixed_chains,
                                                              count_tuple)
                     pdb_output = cif_path.replace(".cif", ".pdb")
+                    print(metrics)
                     # convert cif to pdb
                     if convert_cif_to_pdb(cif_path, pdb_output):
                         return metrics, pdb_output,chain_number_list_cdr
@@ -943,36 +945,47 @@ try:
             return metrics, copied_file,chain_number_list_cdr
 except Exception as e:
     print(f"unable to import Protenix modules: {str(e)}")
-    
 import subprocess
+from pathlib import Path
+import os
 
-def run_AF3_evaluation_with_ref_eval(output_dir,json_path,pkl_path, cyclic, dump_result, ref_time_steps, num_samples):
+def run_AF3_evaluation_with_ref_eval(output_dir, json_path, pkl_path, dump_result,
+                                     ref_time_steps, num_samples, cyclic=1):
     try:
-        command = (
-            'python '
-            f'./eval/af3_init.py '
-            f'--input_json={json_path} '
-            f'--ref_time_steps={ref_time_steps} '
-            f'--output_base_dir={output_dir} '
-            f'--cyclic={cyclic} '
-            f'--num_samples={num_samples} '
-            f'--ref_pdb_path={pkl_path} '
-            f'--dump_result={dump_result} '
-        )
-        print(command)
+        # 以当前工作目录为基础
+        af3_script = Path("eval") / "af3_init.py"
+
+        if not af3_script.exists():
+            raise FileNotFoundError(f"{af3_script.resolve()} does not exist!")
+
+        command = [
+            "python",
+            str(af3_script),
+            f"--input_json={json_path}",
+            f"--ref_time_steps={ref_time_steps}",
+            f"--output_base_dir={output_dir}",
+            f"--cyclic={cyclic}",
+            f"--num_samples={num_samples}",
+            f"--ref_pdb_path={pkl_path}",
+            f"--dump_result={dump_result}"
+        ]
+
+        print("Running command:", " ".join(command))
+
         result = subprocess.run(
             command,
-            shell=True,
             text=True,
             capture_output=True,
             timeout=3600
-
         )
-        # Check if the process failed
-        result.check_returncode() 
+
+        result.check_returncode()
         print("Command executed successfully!")
         print("Output:", result.stdout)
         return True
+
+    except FileNotFoundError as e:
+        print("File not found:", str(e))
 
     except subprocess.CalledProcessError as e:
         print("Command failed with a non-zero exit code!")

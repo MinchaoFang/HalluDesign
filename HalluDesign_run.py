@@ -106,7 +106,7 @@ def parse_arguments():
                     help="Add list of chains for which chains need to be symmetric, e.g. 'A,B'")
     parser.add_argument("--pocket_fix", action='store_true', default=False,
                     help="for repeat sample")
-    parser.add_argument("--cyclic", type=int, default=None,
+    parser.add_argument("--cyclic", type=int, default=0,
                     help="for cyclic peptide design, only for peptide A")
     parser.add_argument("--ptm",  type=str, nargs='+', required=False, default=[],
                     help="for ptm design")

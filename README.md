@@ -12,7 +12,7 @@ More examples can check in examples/
 python HalluDesign_run.py 
 --input_file <pdbfile> or --pdb_list <pdblist>
 --output_dir <outdir> 
---HalluDesign_model <af3 or protenix> 
+--HalluDesign_model <af3 or protenix or cross_model> 
 --template_path <af3 json or protenix json>
 --ref_time_steps <HalluDesign diffusion steps, 50 for local optimization, 150 for global optimization and design>
 --num_seqs <num sequences per cycle>
