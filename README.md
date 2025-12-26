@@ -75,7 +75,7 @@ bash get_model_params.sh "./model_params"
 ```
 
 ## If you want to use CoDP (Optional)
-Pytorch-based CoDP has GPU memory problem with jax-based AF3, so we use pytorch-based Protenix as our foundationl model.
+Pytorch-based CoDP may has GPU memory problem with jax-based AF3, so we command use pytorch-based Protenix as our foundationl model.
 ```
 git clone https://github.com/MinchaoFang/CoDP.git
 ```

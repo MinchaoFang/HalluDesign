@@ -202,11 +202,13 @@ def main():
     else:
         fixed_residues = []
     evaluator = None
-    if args.CoDP:
+    if args.CoDP and args.HalluDesign_model != "af3":
         checkpoints_to_run = "./CoDP/ckpt/epoch_1_without_esm2.pth"
         esm_name = "facebook/esm2_t33_650M_UR50D"
         #! remain to do!
         evaluator = CoDP(checkpoints_to_run,esm_name)
+    elif args.CoDP and args.HalluDesign_model == "af3":
+        evaluator = "subprocess_CoDP"
     if args.fix_chain_index:
         fixed_chains = args.fix_chain_index.split()
     else:

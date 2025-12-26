@@ -15,6 +15,7 @@ warnings.filterwarnings("ignore", category=PDB.PDBExceptions.PDBConstructionWarn
 import pandas as pd
 import torch
 import numpy as np
+import pickle
 try:
     import biotite.structure.io as strucio
     from biotite.structure import AtomArray
@@ -644,7 +645,7 @@ def run_mpnn_evaluation(scaffold_path,
 
     if mpnn_config_dict["model_name"] =="ligandmpnn_plus_proteinmpnn":
         print("ligandmpnn plus proteinmpnn evaluation")
-        sequences,packed_paths=run_Ligandmpnn_plus_proteinmpnn_evaluation(mpnn_model,scaffold_path,mpnn_config_dict,pocket_res_to_fix,non_pocket_to_fix,interact_fix_analyzer,weights_str,output_dir,symmetry_residues)
+        sequences,packed_paths=run_Ligandmpnn_plus_proteinmpnn_evaluation(mpnn_model,scaffold_path,mpnn_config_dict,pocket_res_to_fix,non_pocket_to_fix,weights_str,output_dir,symmetry_residues)
     else: 
         sequences,packed_paths=run_purempnn_evaluation(mpnn_model,scaffold_path,mpnn_config_dict,pocket_res_to_fix,weights_str,output_dir,bias_AA,symmetry_residues,bais_per_residues)
     
@@ -661,7 +662,7 @@ def run_mpnn_evaluation(scaffold_path,
 
         for batchsize in batchsizes:
             try:
-                original_length_sequences = run_selection_process(
+                updated_sequences = run_selection_process(
                     sequences, packed_paths, evaluator, scaffold_path, num_seqs, batchsize,
                 )
                 print_cuda_memory_usage()
@@ -673,13 +674,31 @@ def run_mpnn_evaluation(scaffold_path,
         else:  # Loop finished normally (all batches failed)
             print("❌ All batchsizes failed. Raising last error.")
             raise last_error
+    elif evaluator =="subprocess_CoDP":
+        #! remain to do!
+        mpnn_config_dict["num_seqs"] = int(mpnn_config_dict["num_seqs"] /8)
+        num_seqs = int(mpnn_config_dict["num_seqs"])
+        input_file_pkl_path = os.path.join( output_dir,"mpnn_generated_sequences.pkl")
+        output_file_pkl_path = os.path.join( output_dir,"mpnn_generated_sequences_scored.pkl")
+        to_updated_sequences = [sequences, packed_paths]
+        with open(input_file_pkl_path, "wb") as f:
+            pickle.dump(to_updated_sequences, f)
+        sucess =subprocess_mpnn_CoDP_evaluation(input_file_pkl = input_file_pkl_path,
+                                        output_file_pkl = output_file_pkl_path,
+                                        scaffold_path = scaffold_path,
+                                        num_seqs=int(mpnn_config_dict["num_seqs"]))
+        if sucess:
+            with open(output_file_pkl_path, "rb") as f:
+                updated_sequences = pickle.load(f)
+        else:
+            updated_sequences = [(seq, packed, 0) for seq, packed in zip(sequences, packed_paths)]
     else:
-        original_length_sequences = [(seq, packed, 0) for seq, packed in zip(sequences, packed_paths)]
+        updated_sequences = [(seq, packed, 0) for seq, packed in zip(sequences, packed_paths)]
 
     metrics_to_tile = []
     metrics_to_copy = copy.deepcopy(metrics)
 
-    for seq, packed, score in original_length_sequences:
+    for seq, packed, score in updated_sequences:
         metrics = copy.deepcopy(metrics_to_copy)
         metrics["mpnn_model"] = mpnn_config_dict["model_name"]
         metrics["packed_path"] = packed
@@ -770,7 +789,7 @@ def run_selection_process(sequences, packed_paths, evaluator, scaffold_path, num
     for seq, packed in current_data:
         # Find the final score corresponding to the sequence (simplified to 0 here; requires storage for actual scores)
         # Theoretically, 'all_scores_for_round' stores the last round's scores, which could be used.
-        # To ensure the format matches the original 'original_length_sequences', we temporarily fill score=0 here.
+        # To ensure the format matches the original 'updated_sequences', we temporarily fill score=0 here.
         # If the result from 'evaluator.predict' is the final score, it can be filled in here.
 
         # Look up the final score for the corresponding sequence (this would be slightly complicated, requiring traceback)
@@ -797,7 +816,7 @@ def run_selection_process(sequences, packed_paths, evaluator, scaffold_path, num
 
 
 
-def run_Ligandmpnn_plus_proteinmpnn_evaluation(mpnn_model,scaffold_path,mpnn_config_dict,pocket_res_to_fix,non_pocket_to_fix,interact_fix_analyzer,weights_str,output_dir,symmetry_residues):  
+def run_Ligandmpnn_plus_proteinmpnn_evaluation(mpnn_model,scaffold_path,mpnn_config_dict,pocket_res_to_fix,non_pocket_to_fix,weights_str,output_dir,symmetry_residues):  
     # ! to do 
     protein_mpnn , ligand_mpnn =  mpnn_model
     sequences  = []
@@ -1765,3 +1784,56 @@ def extract_pdb_info(pdb_file):
                     continue
 
     return np.array(backbone_coords, dtype=np.float32)
+
+import subprocess
+from pathlib import Path
+import os
+
+def subprocess_mpnn_CoDP_evaluation(input_file_pkl,
+                                    output_file_pkl,
+                                    scaffold_path,
+                                    num_seqs):
+    try:
+        CoDP_script = Path("../CoDP") / "CoDP.py"
+
+        if not CoDP_script.exists():
+            raise FileNotFoundError(f"{CoDP_script.resolve()} does not exist!")
+
+        command = [
+            "python",
+            str(CoDP_script),
+            f"--input_file_pkl={input_file_pkl}",
+            f"--output_file_pkl={output_file_pkl}",
+            f"--num_seqs={num_seqs}",
+            f"--pdb_file={scaffold_path}"
+        ]
+
+        print("Running command:", " ".join(command))
+
+        result = subprocess.run(
+            command,
+            text=True,
+            capture_output=True,
+            timeout=3600
+        )
+
+        result.check_returncode()
+        print("Command executed successfully!")
+        print("Output:", result.stdout)
+        return True
+
+    except FileNotFoundError as e:
+        print("File not found:", str(e))
+
+    except subprocess.CalledProcessError as e:
+        print("Command failed with a non-zero exit code!")
+        print("Return code:", e.returncode)
+        print("Error message:", e.stderr)
+        print("Full output:", e.stdout)
+
+    except subprocess.TimeoutExpired as e:
+        print("Command timed out!")
+        print("Timeout:", e.timeout)
+
+    except Exception as e:
+        print("An unexpected error occurred:", str(e))
