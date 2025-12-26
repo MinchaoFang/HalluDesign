@@ -3,7 +3,7 @@ import subprocess
 from typing import Dict, List, Tuple
 import sys
 from local_scripts.input_pkl_preprocess import process_single_file
-from eval.eval_utility import get_random_seeds,PeptideSynthesizer,get_gpu_memory
+from eval.eval_utility import get_random_seeds,get_gpu_memory
 from data.op_utility import most_central_residue_resseq
 import copy
 import os
@@ -157,7 +157,6 @@ def self_consistency_protenix(scaffold_path,
                         sm,  
                         dna,
                         rna,
-                        ref_eval,
                         chain_types,
                         pocket_res,
                         fixed_chains,
@@ -212,24 +211,7 @@ def self_consistency_protenix(scaffold_path,
             
         base_name = os.path.basename(scaffold_path)
        
-        if ref_eval:
-            print("ref guided confidence evaluation")
-            
-            ref_out_dir = os.path.join(output_dir, "packed")
-            # Run AF3
-            pkl_path = os.path.join(ref_out_dir, f'{os.path.splitext(packed)[0]}.pkl')
-            atom_array = read_pdb_to_atom_array(packed)
-            pred_coordinates_tensor = extract_coordinates(atom_array, as_tensor=True)
-            torch.save(pred_coordinates_tensor,pkl_path)
-            results_eval=AF3Designer_model.predict(
-            input_json_path=json_path,
-            dump_dir=output_dir,
-            seed=123,
-            input_atom_array_path=pkl_path,
-            ref_time_steps =0
-        )
-        else:
-            results_eval=AF3Designer_model.predict(
+        results_eval=AF3Designer_model.predict(
             input_json_path=json_path,
             dump_dir=output_dir,
             seed=123
@@ -357,7 +339,6 @@ def self_consistency_af3(scaffold_path,
                         ccd_codes,
                         dna,
                         rna,
-                        ref_eval,
                         chain_types,
                         pocket_res,
                         fixed_chains,
@@ -448,23 +429,8 @@ def self_consistency_af3(scaffold_path,
             
         base_name = os.path.basename(scaffold_path)
        
-        if ref_eval:
-            print("normal AF3 batch diffusion plus ref guided diffusion")
-            
-            ref_out_dir = os.path.join(output_dir, "packed")
-            result_pkl, file_name, error = process_single_file(( packed , ref_out_dir, ref_out_dir),None)
-            # Run AF3
-            pkl_path = os.path.join(ref_out_dir, f'{os.path.splitext(packed)[0]}.pkl')
-            results_eval=AF3Designer_model.single_file_process(json_path,output_dir,
-                            ref_pdb_path=pkl_path,
-                            ref_time_steps =0,
-                            num_samples=5,
-                            ref_time_evaluation = 0,
-                            cyclic =cyclic_prediction,
-                            ref_pkl_dump_path=None)
-        else:
-            print("normal AF3 batch diffusion")
-            results_eval=AF3Designer_model.single_file_process(json_path,output_dir,cyclic =cyclic_prediction)
+        print("normal AF3 batch diffusion")
+        results_eval=AF3Designer_model.single_file_process(json_path,output_dir,cyclic =cyclic_prediction)
         #print(results_eval)
         #import pickle
 

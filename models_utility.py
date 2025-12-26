@@ -1,6 +1,6 @@
 import os
 from data.op_utility import read_protein_info_from_copied_file, filter_protein_info,residue_to_str,cdr_process,find_all_sequence_residues_in_pdb, random_protein_sequence
-from eval.evaluation import run_mpnn_evaluation, self_consistency_af3, get_fake_msa ,process_confidence_metrics_af3,process_confidence_metrics_protenix,self_consistency_protenix,read_pdb_to_atom_array,extract_coordinates
+from eval.evaluation import run_mpnn_evaluation, self_consistency_af3 ,process_confidence_metrics_af3,process_confidence_metrics_protenix,self_consistency_protenix,read_pdb_to_atom_array,extract_coordinates
 import copy
 from typing import Dict, List, Tuple
 import shutil
@@ -19,12 +19,6 @@ def af3_op_af3_eval(pdb_file: str,
                       mpnn_config_dict,
                       AF3Designer_model,
                       ref_time_steps,
-                      num_samples,
-                      num_seeds,
-                      template_plddt_threshold,
-                      template_plddt_threshold_length,
-                      fake_msa,
-                      ref_eval,
                       chain_types,
                       fixed_chains,
                       fixed_residues,
@@ -103,19 +97,6 @@ def af3_op_af3_eval(pdb_file: str,
             pocket_res =  find_pocket_residues_based_on_distance(pdbfile=copied_file ,cutoff=8.0)
             print(len(pocket_res))
 
-        if template_plddt_threshold > 0 and cycle >= 1:
-            template_to_json = template_process(cif_pre_path, template_plddt_threshold,template_plddt_threshold_length)
-            
-            for result in template_to_json:
-                chain_id = result['chain']
-                indices = result['queryIndices']
-                converted = [f"{chain_id}{index + 1}" for index in indices]  # Adjust indices (+1)
-                # pockets res fix should has two requiments: plddt good and has paired-wise energy between LIG
-                
-                fixed_residues_for_MPNN +=  converted
-                result['queryIndices'] = [int(indic[1:])-1 for indic in fixed_residues_for_MPNN if indic[0]==chain_id]
-                result['templateIndices'] = result['queryIndices']
-
         print("plddt_good_protein_indicates", fixed_residues_for_MPNN)
         
         metrics["fixed_residues_for_MPNN_len"] = len(fixed_residues_for_MPNN) 
@@ -152,7 +133,6 @@ def af3_op_af3_eval(pdb_file: str,
                 ccd,
                 dna,
                 rna,
-                ref_eval,
                 chain_types,
                 pocket_res,
                 fixed_chains,
@@ -207,7 +187,7 @@ def af3_op_af3_eval(pdb_file: str,
             count += 1
             
         count_tuple = [count,protein_count,sm_count,rna_count,dna_count]
-        input_json["modelSeeds"] = get_random_seeds(num_seeds)
+        input_json["modelSeeds"] = get_random_seeds(1)
         # use the previous MSA but replace the query sequence
         if replace_MSA:
             #msa=f'>query\n{input_json["sequences"][chain]["protein"]["sequence"]}\n'
@@ -241,45 +221,6 @@ def af3_op_af3_eval(pdb_file: str,
             # update input_json
             input_json['sequences'][0]['protein']['unpairedMsa'] = '\n'.join(msa_lines) + '\n'
 
-
-        # NOTE:
-        # This feature was implemented to explore MSA influence.
-        # After evaluation, it was found to bring limited benefit,
-        # so it is currently not used in the main pipeline.
-        # use the previous step cif file to make fake msa 
-        if fake_msa and cycle >=1:
-            seeds_path = os.path.join(previous_dir, tag_pre.replace(".pdb", ""))
-            subfolder = os.path.join(seeds_path, "all_samples")
-            cif_files = [
-                os.path.abspath(os.path.join(subfolder, f))  
-                for f in os.listdir(subfolder)  
-                if os.path.isfile(os.path.join(subfolder, f)) and f.endswith(".cif")  
-            ]
-            for chain in range(0,protein_count):
-                if  chain_labels[chain] not in fixed_chains:
-                    msa=f'>query\n{input_json["sequences"][chain]["protein"]["sequence"]}\n'
-                    for cif_file in cif_files:
-                        to_fake_msa_file = os.path.join(seeds_path, subfolder,subfolder+"_model.pdb")
-                        convert_cif_to_pdb(cif_file,to_fake_msa_file)
-                        msa=msa+get_fake_msa(to_fake_msa_file,fake_msa,chain, mpnn_model)
-                    input_json['sequences'][chain]['protein']["unpairedMsa"] = msa
-            for cif_file in cif_files:
-                os.remove(cif_file)
-
-        # NOTE:
-        # This feature was implemented to explore template influence.
-        # After evaluation, it was found to bring limited benefit,
-        # so it is currently not used in the main pipeline.
-        # use the previous step cif file to make fake template 
-        if template_plddt_threshold > 0 and cycle >=1:
-            chain_id_path = split_cif_by_chain(cif_pre_path, os.path.join(previous_dir, tag_pre.replace(".pdb", "")),fixed_chains)
-            _to_count = 0
-            for path in chain_id_path:
-                template_to_json[_to_count]["mmcif"] = read_file(pathlib.Path(path),pathlib.Path(json_path))
-                del template_to_json[_to_count]["chain"]
-                input_json['sequences'][_to_count]['protein']['templates'] = [template_to_json[_to_count]]
-                _to_count += 1
-
         with open(json_path, 'w') as f:
             json.dump(input_json, f, indent=2)
         
@@ -301,7 +242,7 @@ def af3_op_af3_eval(pdb_file: str,
         # run AF3
         pkl_path = os.path.join(target_dir, f'{os.path.splitext(copied_file)[0]}.pkl')
         clear_gpu_memory()
-        print(json_path,  target_dir, pkl_path, ref_time_steps, num_samples)
+        print(json_path,  target_dir, pkl_path, ref_time_steps)
         if ref_time_steps == 200:
             print("pure prediction")
             results_op= AF3Designer_model.single_file_process(json_path=json_path,
@@ -309,7 +250,7 @@ def af3_op_af3_eval(pdb_file: str,
                                             ref_pdb_path=None,
                                             ref_time_steps =200,
                                             cyclic=cyclic,
-                                            num_samples=num_samples)
+                                            num_samples=5)
         elif cycle == 0 and random_init:
             print("pure prediction")
             results_op= AF3Designer_model.single_file_process(json_path=json_path,
@@ -317,14 +258,14 @@ def af3_op_af3_eval(pdb_file: str,
                                             ref_pdb_path=None,
                                             ref_time_steps =200,
                                             cyclic=cyclic,
-                                            num_samples=num_samples)
+                                            num_samples=5)
         else:
             results_op= AF3Designer_model.single_file_process(json_path=json_path,
                                               out_dir=target_dir,
                                             ref_pdb_path=pkl_path,
                                             ref_time_steps =ref_time_steps,
                                             cyclic=cyclic,
-                                            num_samples=num_samples)
+                                            num_samples=5)
         
         if results_op:
             # get output path
@@ -373,7 +314,6 @@ try:
                       mpnn_config_dict,
                       Designer_model,
                       ref_time_steps,
-                      ref_eval,
                       chain_types,
                       fixed_chains,
                       fixed_residues,
@@ -476,7 +416,6 @@ try:
                     sm=sm,
                     dna=dna,
                     rna=rna,
-                    ref_eval=ref_eval,
                     chain_types=chain_types,
                     pocket_res=pocket_res,
                     fixed_chains=fixed_chains,

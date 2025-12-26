@@ -60,16 +60,6 @@ def parse_arguments():
                     help='fix seq csv which contains file_path and fix res index, you can also provide bias column to do bias seqeunce design')
     parser.add_argument('--framework_seq',  type=str, nargs='+', required=False, default=[],
                     help='framework seq input to refine antibody, sequence defined in this will be fixed')
-    parser.add_argument('--num_samples', type=int, default=1,
-                       help='AF3 optimizer batchsize')
-    parser.add_argument('--num_seeds', type=int, default=1,
-                       help='AF3 number random seeds')
-    parser.add_argument('--early_stop_threshold', type=int, default=0,
-                       help='AF3 early_stop_plddt_threshold')
-    parser.add_argument('--template_plddt_threshold', type=int, default=0,
-                       help='AF3 template_plddt_threshold')
-    parser.add_argument('--template_plddt_threshold_length', type=int, default=5,
-                       help='AF3 template_plddt_threshold length _threshold')
     parser.add_argument('--template_path', type=str, required=True,
                        help='Path to AF3 template.json file, it should be really careful to treat with')
     parser.add_argument('--template_for_eval', type=str, required=False, 
@@ -78,12 +68,8 @@ def parse_arguments():
                        help='Path to AF3 template.json file only for cross model')       
     parser.add_argument('--HalluDesign_model', type=str,  required=True,
                        help='af3 or Protenix')
-    parser.add_argument('--ref_eval', action='store_true', default=False,
-                    help='whether to use ref position in AF3 evaluation, which means direct send atom positions to AF3, only use it confidence head')
     parser.add_argument('--CoDP', action='store_true', default=False,
                     help='whether to use CoDP to validate sequence quality')
-    parser.add_argument('--fake_msa', type=int,  default=None,
-                       help='whether to use how many ProteinMPNN (for pure protien system) or LigandMPNN (for protien and ligand system) seqs per cif structure to fake MSA')
     parser.add_argument('--sm', type=str, nargs='+', required=False, default=[],
                     help='smiles input, it needs a good structure mapping smille')
     parser.add_argument('--mpnn',  type=str,  required=False,
@@ -277,10 +263,6 @@ def main():
             print(f"  Starting cycle {cycle+1}")
             try:
                 is_last_cycle = (cycle == args.num_recycles - 1)
-                # early stop if you wish 
-                if cycle > 0 and  args.early_stop_threshold > 0:
-                    if metrics[0]['op_plddt'] > args.early_stop_threshold :
-                        is_last_cycle =True
                 design_begin = False
                 if cycle >= args.design_epoch_begin:
                     mpnn_config_dict['num_seqs'] = args.num_seqs
@@ -298,12 +280,6 @@ def main():
                     mpnn_config_dict,
                     Designer_model,
                     args.ref_time_steps,
-                    args.num_samples,
-                    args.num_seeds,
-                    args.template_plddt_threshold,
-                    args.template_plddt_threshold_length,
-                    args.fake_msa,
-                    args.ref_eval,
                     chain_types,
                     fixed_chains,
                     fixed_residues,
@@ -337,7 +313,6 @@ def main():
                     mpnn_config_dict=mpnn_config_dict,
                     Designer_model=Designer_model,
                     ref_time_steps=args.ref_time_steps,
-                    ref_eval=args.ref_eval,
                     chain_types=chain_types,
                     fixed_chains=fixed_chains,
                     fixed_residues=fixed_residues,
@@ -369,7 +344,6 @@ def main():
                     mpnn_config_dict=mpnn_config_dict,
                     Designer_model=Designer_model,
                     ref_time_steps=args.ref_time_steps,
-                    ref_eval=args.ref_eval,
                     chain_types=chain_types,
                     fixed_chains=fixed_chains,
                     fixed_residues=fixed_residues,
