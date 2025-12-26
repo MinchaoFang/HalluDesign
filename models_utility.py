@@ -544,7 +544,6 @@ try:
         mpnn_config_dict,
         Designer_model,
         ref_time_steps,
-        ref_eval,
         chain_types,
         fixed_chains,
         fixed_residues,
