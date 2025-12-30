@@ -43,7 +43,7 @@ https://doi.org/10.5281/zenodo.17789892
 ```
 
 ## Conda 
-
+We provide a list of available package versions in the requirements.txt file.
 ### Install AF3
 ```
 git clone https://github.com/MinchaoFang/HalluDesign.git
