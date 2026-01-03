@@ -985,7 +985,7 @@ def process_confidence_metrics_protenix(results_op, cif_path: str, copied_file :
             print("rmsd wrong")
         
         if (sm_count != 0) or (rna_count != 0) or (dna_count!= 0):
-            metrics[f'eval_key_res_plddt'] = calculate_plddt_avg(cif_path, pocket_res)
+            metrics[f'op_key_res_plddt'] = calculate_plddt_avg(cif_path, pocket_res)
             protein_indices = range(protein_count)
             other_indices = range(protein_count, count)  # Indices of other chains
             # Calculate iPTM of other chains relative to the protein chain
@@ -1002,14 +1002,14 @@ def process_confidence_metrics_protenix(results_op, cif_path: str, copied_file :
             all_ipae_to_protein = [x for x in all_ipae_to_protein if x is not None]
 
             if all_iptm_to_protein:
-                metrics[f'eval_all_iptm_to_protein'] = (sum(all_iptm_to_protein) / len(all_iptm_to_protein)).item()
+                metrics[f'op_all_iptm_to_protein'] = (sum(all_iptm_to_protein) / len(all_iptm_to_protein)).item()
             else:
-                metrics[f'eval_all_iptm_to_protein'] = 0
+                metrics[f'op_all_iptm_to_protein'] = 0
 
             if all_ipae_to_protein:
-                metrics[f'eval_all_ipae_to_protein'] = (sum(all_ipae_to_protein) / len(all_ipae_to_protein)).item()
+                metrics[f'op_all_ipae_to_protein'] = (sum(all_ipae_to_protein) / len(all_ipae_to_protein)).item()
             else:
-                metrics[f'eval_all_ipae_to_protein'] = 0
+                metrics[f'op_all_ipae_to_protein'] = 0
             for j in other_indices:
                 label = chain_labels[j]
                 cross_values_iptm = []
@@ -1024,8 +1024,8 @@ def process_confidence_metrics_protenix(results_op, cif_path: str, copied_file :
                 cross_values_ipae = [x for x in cross_values_ipae if x is not None]
                 average_iptm = sum(cross_values_iptm) / len(cross_values_iptm) if cross_values_iptm else 0
                 average_ipae = sum(cross_values_ipae) / len(cross_values_ipae) if cross_values_ipae else 0
-                metrics[f'eval_{label}_iptm'] = average_iptm.item()
-                metrics[f'eval_{label}_ipae'] = average_ipae
+                metrics[f'op_{label}_iptm'] = average_iptm.item()
+                metrics[f'op_{label}_ipae'] = average_ipae
 
         for _ in metrics_tile:
             _.update(metrics)
@@ -1132,7 +1132,7 @@ def process_confidence_metrics_af3(results_op, cif_path: str, copied_file : str,
             print("rmsd wrong")
         
         if (sm_count != 0) or (rna_count != 0) or (dna_count!= 0):
-            metrics[f'eval_key_res_plddt'] = calculate_plddt_avg(cif_path, pocket_res)
+            metrics[f'op_key_res_plddt'] = calculate_plddt_avg(cif_path, pocket_res)
             protein_indices = range(protein_count)
             other_indices = range(protein_count, count)  # Indices of other chains
             # Calculate iPTM of other chains relative to the protein chain
@@ -1147,14 +1147,14 @@ def process_confidence_metrics_af3(results_op, cif_path: str, copied_file : str,
             all_iptm_to_protein = [x for x in all_iptm_to_protein if x is not None]
             all_ipae_to_protein = [x for x in all_ipae_to_protein if x is not None]
             if all_iptm_to_protein:
-                metrics[f'eval_all_iptm_to_protein'] = sum(all_iptm_to_protein) / len(all_iptm_to_protein)
+                metrics[f'op_all_iptm_to_protein'] = sum(all_iptm_to_protein) / len(all_iptm_to_protein)
             else:
-                metrics[f'eval_all_iptm_to_protein'] = 0
+                metrics[f'op_all_iptm_to_protein'] = 0
                 
             if all_ipae_to_protein:
-                metrics[f'eval_all_ipae_to_protein'] = sum(all_ipae_to_protein) / len(all_ipae_to_protein)
+                metrics[f'op_all_ipae_to_protein'] = sum(all_ipae_to_protein) / len(all_ipae_to_protein)
             else:
-                metrics[f'eval_all_ipae_to_protein'] = 0
+                metrics[f'op_all_ipae_to_protein'] = 0
             
             for j in other_indices:
                 label = chain_labels[j]
@@ -1169,8 +1169,8 @@ def process_confidence_metrics_af3(results_op, cif_path: str, copied_file : str,
                 cross_values_iptm = [x for x in cross_values_iptm if x is not None]
                 average_iptm = sum(cross_values_iptm) / len(cross_values_iptm) if cross_values_iptm else 0
                 average_ipae = sum(cross_values_ipae) / len(cross_values_ipae) if cross_values_ipae else 0
-                metrics[f'eval_{label}_iptm'] = average_iptm
-                metrics[f'eval_{label}_ipae'] = average_ipae
+                metrics[f'op_{label}_iptm'] = average_iptm
+                metrics[f'op_{label}_ipae'] = average_ipae
 
         for _ in metrics_tile:
             _.update(metrics)
