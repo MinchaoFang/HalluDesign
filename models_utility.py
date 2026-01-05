@@ -646,7 +646,6 @@ try:
                     sm=sm,
                     dna=dna,
                     rna=rna,
-                    ref_eval=ref_eval,
                     chain_types=chain_types,
                     pocket_res=pocket_res,
                     fixed_chains=fixed_chains,
