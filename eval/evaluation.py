@@ -196,14 +196,11 @@ def self_consistency_protenix(scaffold_path,
             if chain == 'ligand':
                 input_json[0]['sequences'][count]["ligand"]["ligand"] = sm[sm_count]
                 sm_count +=1
-                if random_init:
-                    centre_res = most_central_residue_resseq(metric["packed_path"])
-                    input_json[0]['constraint']['contact'][0]["position1"] = centre_res
             if chain == 'dna':
-                input_json[0]['sequences'][count]["dnaSequence"]["sequence"] = dna[sm_count]
+                input_json[0]['sequences'][count]["dnaSequence"]["sequence"] = dna[dna_count]
                 dna_count +=1
             if chain == 'rna':
-                input_json[0]['sequences'][count]["rnaSequence"]["sequence"] = rna[sm_count]
+                input_json[0]['sequences'][count]["rnaSequence"]["sequence"] = rna[rna_count]
                 rna_count +=1
             count += 1
         # Write the new JSON file
