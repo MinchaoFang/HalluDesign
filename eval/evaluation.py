@@ -341,7 +341,7 @@ def self_consistency_protenix(scaffold_path,
         seq_count += 1
         metrics_to_tile.append(metric)
     # ! remain to do, fix logits for reindex
-    metrics_to_tile.sort(key=lambda x: x['eval_plddt'])
+    metrics_to_tile.sort(key=lambda x: x['eval_plddt'], reverse=True)
     return metrics_to_tile
 
 
@@ -602,7 +602,7 @@ def self_consistency_af3(scaffold_path,
         seq_count += 1
         metrics_to_tile.append(metric)
     # ! remain to do, fix logits for reindex
-    metrics_to_tile.sort(key=lambda x: x['eval_plddt'])
+    metrics_to_tile.sort(key=lambda x: x['eval_plddt'], reverse=True)
     return metrics_to_tile
 
 def run_mpnn_evaluation(scaffold_path,
