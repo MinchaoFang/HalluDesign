@@ -63,7 +63,7 @@ build_data
 git clone https://github.com/NVIDIA/cutlass.git
 cd Protenix/
 pip install .
-mamba install -c conda-forge gcc=12 gxx=12
+conda install -c conda-forge gcc=12 gxx=12
 ```
 
 ### Install HalluDesign
