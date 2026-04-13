@@ -616,9 +616,12 @@ def calculate_ca_rmsd(cif_file, pdb_file,fixed_chains=None):
 
             cif_ca_all = [cif_ca_dict_all[key] for key in sorted_keys_all]
             pdb_ca_all = [pdb_ca_dict_all[key] for key in sorted_keys_all]
-            super_imposer_all = Superimposer()
-            super_imposer_all.set_atoms(cif_ca_all, pdb_ca_all) 
-            binder_rmsd = super_imposer_all.rms
+            ref_coords = np.array([atom.get_coord() for atom in cif_ca_all])
+            model_coords = np.array([atom.get_coord() for atom in pdb_ca_all])
+            binder_rmsd = np.sqrt(np.mean(np.sum((ref_coords - model_coords) ** 2, axis=1)))
+            #super_imposer_all = Superimposer()
+            #super_imposer_all.set_atoms(cif_ca_all, pdb_ca_all) 
+            #binder_rmsd = super_imposer_all.rms
         
         else:
             cif_ca_dict_all = get_ca_dict(cif_structure)
