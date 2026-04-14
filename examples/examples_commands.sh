@@ -33,6 +33,9 @@ export PATH=$(python -c "import site; print(site.getsitepackages()[0] + '/nvidia
 # will use cyclic positional encoding and we will only the length of Chain A as input and random initialize the sequence
 export PATH=$(python -c "import site; print(site.getsitepackages()[0] + '/nvidia/cuda_nvcc/bin')"):$PATH && python ./HalluDesign_run.py --HalluDesign_model af3 --input_file examples/cyclic_peptide/PDL1_cyclic_peptide.pdb --template_path examples/protein_binder/pdl1_protein.json --mpnn "protein_mpnn" --output_dir $(pwd)/examples/cyclic_peptide/HalluDesign_design --fix_chain_index "B" --num_seqs 2 --num_recycles 30 --design_epoch_begin 20 --ref_time_steps 150 --cyclic 1 --random_init
 
+# Non head-tail cyclic peptide design example
+export PATH=$(python -c "import site; print(site.getsitepackages()[0] + '/nvidia/cuda_nvcc/bin')"):$PATH && python ./HalluDesign_run.py --HalluDesign_model af3 --input_file examples/cyclic_peptide/MCL1_pep.pdb --template_path examples/cyclic_peptide/non_head_tail_cyclic_peptide.json --mpnn "protein_mpnn" --output_dir $(pwd)/examples/cyclic_peptide/HalluDesign_design --fix_chain_index "B" --num_seqs 2 --num_recycles 30 --design_epoch_begin 20 --ref_time_steps 150 --random_init --fix_res_index "A8" --ccd AZOR
+
 # CoDP empowered ligand binder design with Protenix model example
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True && export CC=$(which gcc) && export CXX=$(which g++) && python ./HalluDesign_run.py --HalluDesign_model protenix --input_file examples/ligand_binder/protein_ligand.pdb --template_path examples/ligand_binder/template_sm_protenix.json --mpnn "ligand_mpnn" --sm "C1[C@@H]2[C@H]([C@H]([C@@H](O2)N3C=NC4=C(N=CN=C43)N)O)OP(=O)(O1)O" --output_dir $(pwd)/examples/ligand_binder/HalluDesign_op --num_seqs 2 --num_recycles 10 --ref_time_steps 50 --CoDP
 
