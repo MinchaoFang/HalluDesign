@@ -86,6 +86,50 @@ def calculate_weights(residue_groups):
     return weights
     
 
+
+def generate_A_chain_modulo_symmetry(protein_info, n_repeat):
+    """
+    Generate full stride-based symmetric segments for chain A.
+
+    Each segment contains n_repeat residues:
+    Ai, A(i+stride), A(i+2*stride), ...
+
+    Args:
+        protein_info (dict): {chain_id: [residue objects]}
+        n_repeat (int): number of repeats per segment
+
+    Returns:
+        str: symmetric representation joined by '|'
+    """
+    if n_repeat <= 0:
+        raise ValueError("n_repeat must be a positive integer")
+
+    residues = protein_info.get("A")
+    if not residues:
+        return ""
+
+    # Sort by residue number
+    residues = sorted(residues, key=lambda x: x.id[1])
+    total = len(residues)
+
+    if total % n_repeat != 0:
+        raise ValueError(
+            f"Total residues ({total}) not divisible by n_repeat ({n_repeat})"
+        )
+
+    stride = total // n_repeat
+    groups = []
+
+    for i in range(stride):
+        group = []
+        for j in range(n_repeat):
+            idx = i + j * stride
+            if idx < total:
+                group.append(f"A{idx + 1}")
+        groups.append(",".join(group))
+
+    return "|".join(groups)
+
 def convert_cif_to_pdb(cif_file, pdb_file):
     """
     convert CIF to PDB, modify resnameLIG_B to LIG

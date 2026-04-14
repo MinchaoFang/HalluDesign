@@ -2,6 +2,9 @@
 ## AF3
 export PATH=$(python -c "import site; print(site.getsitepackages()[0] + '/nvidia/cuda_nvcc/bin')"):$PATH && python ./HalluDesign_run.py --HalluDesign_model af3 --input_file examples/monomer/monomer.pdb --template_path examples/monomer/template_und.json --mpnn "protein_mpnn" --output_dir $(pwd)/examples/monomer/HalluDesign_op --num_seqs 2 --num_recycles 10 --ref_time_steps 50
 
+## pdblist as input 
+export PATH=$(python -c "import site; print(site.getsitepackages()[0] + '/nvidia/cuda_nvcc/bin')"):$PATH && python ./HalluDesign_run.py --HalluDesign_model af3 --pdb_list examples/monomer/pdblist --template_path examples/monomer/template_und.json --mpnn "protein_mpnn" --output_dir $(pwd)/examples/monomer/HalluDesign_op --num_seqs 2 --num_recycles 10 --ref_time_steps 50
+
 ## Protenix
 export CC=$(which gcc) && export CXX=$(which g++) && python ./HalluDesign_run.py --HalluDesign_model protenix --input_file examples/monomer/monomer.pdb --template_path examples/monomer/template_und_protenix.json  --mpnn "protein_mpnn" --output_dir $(pwd)/examples/monomer/HalluDesign_op --num_seqs 2 --num_recycles 10 --ref_time_steps 50
 
@@ -35,3 +38,16 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True && export CC=$(which gcc
 
 # CoDP empowered monomer design with AF3 model example
 export XLA_PYTHON_CLIENT_PREALLOCATE=false && export XLA_CLIENT_MEM_FRACTION=0.8 && export PATH=$(python -c "import site; print(site.getsitepackages()[0] + '/nvidia/cuda_nvcc/bin')"):$PATH && python ./HalluDesign_run.py --HalluDesign_model af3 --input_file examples/monomer/monomer.pdb --template_path examples/monomer/template_und.json --mpnn "protein_mpnn" --output_dir $(pwd)/examples/monomer/HalluDesign_op --num_seqs 2 --num_recycles 10 --ref_time_steps 50 --CoDP
+
+# Symmetric protein design example
+export CC=$(which gcc) && export CXX=$(which g++) && python ./HalluDesign_run.py --HalluDesign_model cross_model --input_file examples/Symmetric_protein/trimer.pdb --template_path examples/Symmetric_protein/template_und_protenix_3.json  --extra_json_path examples/Symmetric_protein/template_und_3.json --mpnn "protein_mpnn" --output_dir $(pwd)/examples/Symmetric_protein/HalluDesign_design --num_seqs 2 --num_recycles 10 --ref_time_steps 150 --design_epoch_begin 8 --symmetry_chains "A,B,C" --random_init
+
+# Symmetric protein optimization example
+export PATH=$(python -c "import site; print(site.getsitepackages()[0] + 'nvidia/cuda_nvcc/bin')"):$PATH && python ./HalluDesign_run.py --HalluDesign_model af3 --input_file examples/Symmetric_protein/trimer.pdb --template_path  examples/Symmetric_protein/template_und_3.json --mpnn "protein_mpnn" --output_dir $(pwd)/examples/Symmetric_protein/HalluDesign_design --num_seqs 2 --num_recycles 10 --ref_time_steps 150 --design_epoch_begin 8 --symmetry_chains "A,B,C"
+
+# Nanobody CDR design example
+export CC=$(which gcc) && export CXX=$(which g++) && python ./HalluDesign_run.py --HalluDesign_model protenix --input_file examples/protein_binder/FGFR_nanobody.pdb --template_path examples/protein_binder/template_und_protenix_nanobody.json  --mpnn "protein_mpnn" --output_dir $(pwd)/examples/protein_binder/HalluDesign_op --num_seqs 2 --num_recycles 10 --ref_time_steps 150 --design_epoch_begin 7 --random_init --framework "QVQLVESGGGLVQPGGSLRLSCAAS" "SLGWFRQAPGQGLEAVAAIASMGGLTYYADSVKGRFTISRDNSKNTLYLQMNSLRAEDTAVYYCAA" "WGQGTLVTVSS" --fix_chain_index "B"
+
+# Repeat protein design example
+export CC=$(which gcc) && export CXX=$(which g++) && python ./HalluDesign_run.py --HalluDesign_model cross_model --input_file examples/monomer/monomer.pdb --template_path examples/monomer/template_und_protenix.json  --mpnn "protein_mpnn" --output_dir $(pwd)/examples/monomer/HalluDesign_op --num_seqs 2 --num_recycles 10 --ref_time_steps 150 --random_init --symmetry_segments 4
+

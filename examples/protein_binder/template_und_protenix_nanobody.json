@@ -1,0 +1,32 @@
+[
+    {
+        "sequences": [
+            {
+                "proteinChain": {
+                    "sequence": "APARTQYLLVNPALHPLLARAAYELGMKVAAILTDLDEAAEAAVARLEAEGYKLAYTLRDDPRLAEAQRRLRVARELGLDGRTVALETFDAIDDFNVVVALGFGLGPLTAAQEADPAVQARVRALAAALAATEVPRGLRFSLAVALAGGSLEEAAAAARAELEARRAALEAERAEIDARL",
+                    "count": 1
+                }
+            },{
+                "proteinChain": {
+                    "sequence": "RSPHRPILQAGLPANASTVVGGDVEFVCKVYSDAQPHIQWIKHVPYLKVLKAAGVNTTDKEIEVLYIRNVTFEDAGEYTCLAGNSIGISFHSAWLTVLPAP",
+                    "count": 1
+                }
+            }
+        ],
+        "name": "camp_0_14_recycle_1_6_model",
+   "constraint": {
+      "contact": [
+        {
+          "entity1": 1,
+          "copy1": 1,
+          "position1": 31,
+          "entity2": 2,
+          "copy2": 1,
+          "position2": 79,
+          "max_distance": 8
+        }
+      ]
+    }
+    }
+]
+

@@ -438,10 +438,12 @@ try:
             json_path = os.path.join(target_dir, metrics[0]['file_name']+".json")
             copied_file = metrics[0]["packed_path"] 
             input_json = template.copy()
-            if isinstance(Designer_model, ProtenixInferrer):
+            print("no protenix evaluation")
+            if Designer_model:
                 print("Designer_model is ProtenixInferrer.")
                 # Prepare to run Protenix
                 input_json[0]['name'] = tag.replace(".pdb", "")
+                print(input_json[0]['name'])
                 # ! to do should allow multi-ccd
                 count = 0
                 sm_count = 0
@@ -450,12 +452,14 @@ try:
                 protein_count = 0
                 chain_labels = string.ascii_uppercase[:10] 
                 for chain in chain_types:
+                    print("no protenix evaluation")
                     if chain == 'protein':
                         if chain_labels[protein_count] not in fixed_chains:
                             if random_init and cycle == 0:
                                 input_json[0]['sequences'][count]['proteinChain']["sequence"]  = random_protein_sequence(get_chain_sequence(copied_file,chain_labels[protein_count]),fixed_residues_for_MPNN, chain_labels[protein_count])
                             else:
                                 input_json[0]['sequences'][count]['proteinChain']["sequence"] = get_chain_sequence(copied_file,chain_labels[protein_count])
+                                
                             protein_count +=1
 
                     if chain == 'ligand':
@@ -463,7 +467,7 @@ try:
                         sm_count +=1
 
                     if chain == 'dna':
-                        input_json[0]['sequences'][count]["dnaSequence"]["sequence"] = dna[sm_count]
+                        input_json[0]['sequences'][count]["dnaSequence"]["sequence"] = dna[dna_count]
                         dna_count +=1
 
                     if chain == 'rna':
@@ -551,6 +555,7 @@ try:
         metrics,
         symmetry_residues,
         symmetry_chains,
+        symmetry_segments,
         sm ,
         dna,
         rna,
@@ -606,6 +611,9 @@ try:
             # for symmetry chains and res design
             if symmetry_chains:
                 symmetry_residues = generate_cross_chain_symmetry(protein_info, symmetry_chains)
+
+            if symmetry_segments:
+                symmetry_residues = generate_A_chain_modulo_symmetry(protein_info, int(symmetry_segments))
 
             pocket_res = []
             # we use the pocket res form the input structure to define the residues around ligand which we will use LigandMPNN to design
@@ -687,6 +695,9 @@ try:
                                 input_json[0]['sequences'][count]['proteinChain']["sequence"]  = random_protein_sequence(get_chain_sequence(copied_file,chain_labels[protein_count]),fixed_residues_for_MPNN, chain_labels[protein_count])
                             else:
                                 input_json[0]['sequences'][count]['proteinChain']["sequence"] = get_chain_sequence(copied_file,chain_labels[protein_count])
+                            if int(symmetry_segments) >= 2:
+                                seq_segment = len(input_json[0]['sequences'][count]['proteinChain']["sequence"])//int(symmetry_segments)
+                                input_json[0]['sequences'][count]['proteinChain']["sequence"]  = input_json[0]['sequences'][count]['proteinChain']["sequence"][:seq_segment] * int(symmetry_segments)
                             protein_count +=1
 
                     if chain == 'ligand':
@@ -694,7 +705,7 @@ try:
                         sm_count +=1
 
                     if chain == 'dna':
-                        input_json[0]['sequences'][count]["dnaSequence"]["sequence"] = dna[sm_count]
+                        input_json[0]['sequences'][count]["dnaSequence"]["sequence"] = dna[dna_count]
                         dna_count +=1
 
                     if chain == 'rna':

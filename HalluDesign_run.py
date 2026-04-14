@@ -92,6 +92,8 @@ def parse_arguments():
                     help="Add list of chains for which chains need to be symmetric, e.g. 'A,B'")
     parser.add_argument("--pocket_fix", action='store_true', default=False,
                     help="for repeat sample")
+    parser.add_argument("--symmetry_segments",type=int,default=0,
+                    help="Add symmetric constraints for Chain A, e.g. 5")
     parser.add_argument("--cyclic", type=int, default=0,
                     help="for cyclic peptide design, only for peptide A")
     parser.add_argument("--ptm",  type=str, nargs='+', required=False, default=[],
@@ -351,6 +353,7 @@ def main():
                     metrics=metrics,
                     symmetry_residues=args.symmetry_residues,
                     symmetry_chains=args.symmetry_chains,
+                    symmetry_segments=args.symmetry_segments,
                     sm=args.sm,
                     dna=args.dna,
                     rna=args.rna,
