@@ -1,0 +1,51 @@
+[
+    {
+        "sequences": [
+            {
+                "proteinChain": {
+                    "sequence": "GGGGGGGGGGGGGGGGGGGGGGGGGG",
+                    "count": 1
+                }
+            },
+            {
+                "ligand": {
+                    "ligand": "FILE_/storage/caolab/fangmc/for_pub/HalluDesign/examples/enzyme_design/ligand_trans.pdb",
+                    "count": 1
+                }
+            }
+        ],
+        "name": "camp_0_14_recycle_1_6_model",
+    "covalent_bonds": [
+            {
+                "entity1": 1,
+                "copy1": 1,
+                "position1": 2,
+                "atom1": "NE2",
+                "entity2": 2,
+                "copy2": 1,
+                "position2": 1,
+                "atom2": "O2"
+            },
+            {
+                "entity1": 1,
+                "copy1": 1,
+                "position1": 6,
+                "atom1": "NE2",
+                "entity2": 2,
+                "copy2": 1,
+                "position2": 1,
+                "atom2": "O2"
+            },
+            {
+                "entity1": 1,
+                "copy1": 1,
+                "position1": 10,
+                "atom1": "NE2",
+                "entity2": 2,
+                "copy2": 1,
+                "position2": 1,
+                "atom2": "O2"
+            }
+    ]
+    }
+]

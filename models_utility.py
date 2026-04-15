@@ -39,6 +39,7 @@ def af3_op_af3_eval(pdb_file: str,
                       cyclic,
                       replace_MSA,
                       ptm,
+                      enzyme_design,
                       run_af3: bool = True) -> Dict:
     """single pdb single cycle"""
     
@@ -173,10 +174,17 @@ def af3_op_af3_eval(pdb_file: str,
                     print(input_json['sequences'][count]['protein']["sequence"])
                 protein_count +=1
             if chain == 'ligand':
-                if ccd:
-                    input_json['sequences'][count]["ligand"]["ccdCodes"] = [ccd[sm_count]]
-                elif sm:
-                    input_json['sequences'][count]["ligand"]["smiles"] = sm[sm_count]
+                if enzyme_design:
+                    print("enzyme design, no ligand input")
+                    his_positions = [int(x[1:]) for x in fixed_residues]
+                    input_json["bondedAtomPairs"][0][0][1] = his_positions[0]
+                    input_json["bondedAtomPairs"][1][0][1] = his_positions[1]
+                    input_json["bondedAtomPairs"][2][0][1] = his_positions[2]
+                else:
+                    if ccd:
+                        input_json['sequences'][count]["ligand"]["ccdCodes"] = [ccd[sm_count]]
+                    elif sm:
+                        input_json['sequences'][count]["ligand"]["smiles"] = sm[sm_count]
                 sm_count +=1
             if chain == 'dna':
                 input_json['sequences'][count]["dna"]["sequence"] = dna[dna_count]
@@ -185,8 +193,9 @@ def af3_op_af3_eval(pdb_file: str,
                 input_json['sequences'][count]["rna"]["sequence"] = rna[rna_count]
                 rna_count +=1
             count += 1
-            
         count_tuple = [count,protein_count,sm_count,rna_count,dna_count]
+        if enzyme_design:
+            count_tuple = [2,1,1,0,0]
         input_json["modelSeeds"] = get_random_seeds(1)
         # use the previous MSA but replace the query sequence
         if replace_MSA:
@@ -567,6 +576,7 @@ try:
         cyclic,
         ptm,
         random_init,
+        enzyme_design,
         run_af3: bool = True) -> Dict:
         """Process a single PDB file in one iteration"""
 
@@ -701,7 +711,16 @@ try:
                             protein_count +=1
 
                     if chain == 'ligand':
-                        input_json[0]['sequences'][count]["ligand"]["ligand"] = sm[sm_count]
+                        if enzyme_design:
+                            print("enzyme design, no ligand input")
+                            his_positions = [int(x[1:]) for x in fixed_residues]
+                            print(his_positions)
+                            input_json[0]["covalent_bonds"][0]["position1"] = his_positions[0]
+                            input_json[0]["covalent_bonds"][1]["position1"] = his_positions[1]
+                            input_json[0]["covalent_bonds"][2]["position1"] = his_positions[2]
+                            
+                        else:
+                            input_json[0]['sequences'][count]["ligand"]["ligand"] = sm[sm_count]
                         sm_count +=1
 
                     if chain == 'dna':
@@ -797,7 +816,14 @@ try:
                             print(input_json['sequences'][count]['protein']["sequence"])
                         protein_count +=1
                     if chain == 'ligand':
-                        input_json['sequences'][count]["ligand"]["smiles"] = sm[sm_count]
+                        if enzyme_design:
+                            print("enzyme design, no ligand input")
+                            his_positions = [int(x[1:]) for x in fixed_residues]
+                            input_json["bondedAtomPairs"][0][0][1] = his_positions[0]
+                            input_json["bondedAtomPairs"][1][0][1] = his_positions[1]
+                            input_json["bondedAtomPairs"][2][0][1] = his_positions[2]
+                        else:
+                            input_json['sequences'][count]["ligand"]["smiles"] = sm[sm_count]
                         sm_count +=1
                     if chain == 'dna':
                         input_json['sequences'][count]["dna"]["sequence"] = dna[dna_count]
@@ -947,3 +973,21 @@ def run_AF3_evaluation_with_ref_eval(output_dir, json_path, pkl_path, dump_resul
 
     except Exception as e:
         print("An unexpected error occurred:", str(e))
+
+import os
+import re
+
+def parse_his_positions_from_pdb_filename(pdb_path, chain_id="A"):
+    """
+    parse_his_positions_from_pdb_filename 
+    return ["A18", "A54", "A77"]
+    """
+
+    fname = os.path.basename(pdb_path)
+
+    match = re.search(r"hpos_([\d_]+)", fname)
+    if not match:
+        raise ValueError(f"no Hpos information found in filename: {fname}")
+
+    positions = match.group(1).split("_")[:3]
+    return [f"{chain_id}{pos}" for pos in positions]

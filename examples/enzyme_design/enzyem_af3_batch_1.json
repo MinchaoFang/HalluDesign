@@ -1,0 +1,70 @@
+{
+    "name": "ZN",
+    "sequences": [
+      {
+        "protein": {
+          "id": [
+            "A"
+          ],
+          "sequence": "GGGGGGGGGGGGGGGGGGGGGGGHGGGGGGGGG",
+          "unpairedMsa": "",
+          "pairedMsa": "",
+          "templates": []
+        }
+      },
+      {
+        "ligand": {
+          "id": [
+            "B"
+          ],
+          "ccdCodes": 
+          ["AZOF"]
+        }
+      }
+    ],
+    "bondedAtomPairs": [
+      [
+        [
+          "A",
+          69,
+          "NE2"
+        ],
+        [
+          "B",
+          1,
+          "O2"
+        ]
+      ],
+      [
+        [
+          "A",
+          43,
+          "NE2"
+        ],
+        [
+          "B",
+          1,
+          "O2"
+        ]
+      ],
+      [
+        [
+          "A",
+          43,
+          "NE2"
+        ],
+        [
+          "B",
+          1,
+          "O2"
+        ]
+      ]
+    ],
+    "modelSeeds": [
+      1
+    ],
+    "dialect": "alphafold3",
+    "userCCD": "data_AZOF\n#\n_chem_comp.id AZOF\n_chem_comp.name 'AZOF'\n_chem_comp.type non-polymer\n_chem_comp.formula 'C10 H6 O4'\n_chem_comp.mon_nstd_parent_comp_id ?\n_chem_comp.pdbx_synonyms ?\n_chem_comp.formula_weight 190.152\n#\nloop_\n_chem_comp_atom.comp_id\n_chem_comp_atom.atom_id\n_chem_comp_atom.alt_atom_id\n_chem_comp_atom.type_symbol\n_chem_comp_atom.charge\n_chem_comp_atom.pdbx_align\n_chem_comp_atom.pdbx_aromatic_flag\n_chem_comp_atom.pdbx_leaving_atom_flag\n_chem_comp_atom.pdbx_stereo_config\n_chem_comp_atom.pdbx_backbone_atom_flag\n_chem_comp_atom.pdbx_n_terminal_atom_flag\n_chem_comp_atom.pdbx_c_terminal_atom_flag\n_chem_comp_atom.model_Cartn_x\n_chem_comp_atom.model_Cartn_y\n_chem_comp_atom.model_Cartn_z\n_chem_comp_atom.pdbx_model_Cartn_x_ideal\n_chem_comp_atom.pdbx_model_Cartn_y_ideal\n_chem_comp_atom.pdbx_model_Cartn_z_ideal\n_chem_comp_atom.pdbx_component_atom_id\n_chem_comp_atom.pdbx_component_comp_id\n_chem_comp_atom.pdbx_ordinal\nAZOF C1 C1 C 0 1 N N N N N N -1.136 2.593 0.528 1.00 0.00 0 C1 AZOF 1\nAZOF C2 C2 C 0 1 N N N N N N -0.249 1.389 0.259 1.00 0.00 0 C2 AZOF 2\nAZOF C3 C3 C 0 1 N N N N N N -0.987 0.075 0.509 1.00 0.00 0 C3 AZOF 3\nAZOF C4 C4 C 0 1 N N N N N N -0.110 -1.156 0.259 1.00 0.00 0 C4 AZOF 4\nAZOF C5 C5 C 0 1 N N N N N N -1.632 -2.709 1.325 1.00 0.00 0 C5 AZOF 5\nAZOF C6 C6 C 0 1 N N N N N N -1.245 -2.471 2.637 1.00 0.00 0 C6 AZOF 6\nAZOF C7 C7 C 0 1 N N N N N N -2.111 -2.818 3.670 1.00 0.00 0 C7 AZOF 7\nAZOF C8 C8 C 0 1 N N N N N N -3.352 -3.413 3.438 1.00 0.00 0 C8 AZOF 8\nAZOF C9 C9 C 0 1 N N N N N N -4.194 -3.753 4.591 1.00 0.00 0 C9 AZOF 9\nAZOF C10 C10 C 0 1 N N N N N N -3.733 -3.476 5.817 1.00 0.00 0 C10 AZOF 10\nAZOF C11 C11 C 0 1 N N N N N N -2.431 -2.844 6.076 1.00 0.00 0 C11 AZOF 11\nAZOF C12 C12 C 0 1 N N N N N N -5.531 -4.397 4.378 1.00 0.00 0 C12 AZOF 12\nAZOF C13 C13 C 0 1 N N N N N N -3.717 -3.662 2.110 1.00 0.00 0 C13 AZOF 13\nAZOF C14 C14 C 0 1 N N N N N N -2.859 -3.317 1.060 1.00 0.00 0 C14 AZOF 14\nAZOF O1 O1 O 0 1 N N N N N N  1.075 -1.173 1.079 1.00 0.00 0 O1 AZOF 15\nAZOF O2 O2 ZN 0 1 N N N N N N  1.906 -1.096 -0.099 1.00 0.00 0 O2 AZOF 16\nAZOF O3 O3 O 0 1 N N N N N N  0.716 -1.002 -0.913 1.00 0.00 0 O3 AZOF 17\nAZOF O4 O4 O 0 1 N N N N N N -0.868 -2.388 0.234 1.00 0.00 0 O4 AZOF 18\nAZOF O5 O5 O 0 1 N N N N N N -2.065 -2.607 7.221 1.00 0.00 0 O5 AZOF 19\nAZOF O6 O6 O 0 1 N N N N N N -1.663 -2.529 4.973 1.00 0.00 0 O6 AZOF 20\n#\nloop_\n_chem_comp_bond.comp_id\n_chem_comp_bond.atom_id_1\n_chem_comp_bond.atom_id_2\n_chem_comp_bond.value_order\n_chem_comp_bond.pdbx_aromatic_flag\n_chem_comp_bond.pdbx_stereo_config\n_chem_comp_bond.pdbx_ordinal\nAZOF O5 C11 DOUB N N 1\nAZOF C11 O6 SING N N 2\nAZOF O6 C7 SING N N 3\nAZOF C7 C8 DOUB N N 4\nAZOF C8 C9 SING N N 5\nAZOF C9 C10 DOUB N N 6\nAZOF C10 C11 SING N N 7\nAZOF C9 C12 SING N N 8\nAZOF C8 C13 SING N N 9\nAZOF C13 C14 DOUB N N 10\nAZOF C14 C5 SING N N 11\nAZOF C5 C6 DOUB N N 12\nAZOF C6 C7 SING N N 13\nAZOF C5 O4 SING N N 14\nAZOF O4 C4 SING N N 15\nAZOF C4 O1 SING N N 16\nAZOF C4 O3 SING N N 17\nAZOF O2 O1 SING N N 18\nAZOF O2 O3 SING N N 19\nAZOF C4 C3 SING N N 20\nAZOF C3 C2 SING N N 21\nAZOF C2 C1 SING N N 22\n#\nloop_\n_pdbx_chem_comp_descriptor.comp_id\n_pdbx_chem_comp_descriptor.type\n_pdbx_chem_comp_descriptor.program\n_pdbx_chem_comp_descriptor.program_version\n_pdbx_chem_comp_descriptor.descriptor\nAZOF SMILES_CANONICAL CACTVS 3.385 'Oc1ccc(O)c2C(=O)C=CC(=O)c12'\n",
+    "version": 1
+  }
+  

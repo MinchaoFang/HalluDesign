@@ -1757,7 +1757,7 @@ def subprocess_mpnn_CoDP_evaluation(input_file_pkl,
                                     scaffold_path,
                                     num_seqs):
     try:
-        CoDP_script = Path("../CoDP") / "CoDP.py"
+        CoDP_script = Path(__file__).resolve().parent.parent / "CoDP" / "CoDP.py"
 
         if not CoDP_script.exists():
             raise FileNotFoundError(f"{CoDP_script.resolve()} does not exist!")

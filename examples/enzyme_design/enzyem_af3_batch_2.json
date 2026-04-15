@@ -1,0 +1,36 @@
+{
+    "name": "gd_dimer",
+    "sequences": [
+      {
+        "protein": {
+          "id": ["A"],
+          "sequence": "NPYARGPNPTAASLEASAGPFTVRSFTVSRPSGYGAGTVYYPTNAGGTVGAIAIVPGYTARQSSSIKWWGPRLASHGFVVITIDTNSTLDQPSSSRSSQQMAALGQVASLNGTSSSPIYGKVDTARMMGVMGWAMGGGGSLISAANNPSSLKAAAPQAPWDSSTNFSSVTVPTLIFACENDSSIAPVNSSSALPIYDSMSRNAKQFLEINGGSHSCANSGNSNQALIGKKGVAWMKRFMDNDTRYSTFACENPNSTRVSDFRTANCS",
+          "unpairedMsa": "",
+          "pairedMsa": "",
+          "templates": []
+        }
+      },
+      {
+        "ligand": {
+          "id": [
+            "B"
+          ],
+          "smiles": 
+            "[Zn+2]"
+        }
+      },
+      {
+        "ligand": {
+          "id": [
+            "C"
+          ],
+          "smiles": 
+            "COC(O)(CC1C=CC([N+]([O-])=O)=CC=1)O"
+        }
+      }
+    ],
+    "modelSeeds": [1],
+    "dialect": "alphafold3",
+    "version": 1
+  }
+

@@ -9,7 +9,7 @@ export PATH=$(python -c "import site; print(site.getsitepackages()[0] + '/nvidia
 export CC=$(which gcc) && export CXX=$(which g++) && python ./HalluDesign_run.py --HalluDesign_model protenix --input_file examples/monomer/monomer.pdb --template_path examples/monomer/template_und_protenix.json  --mpnn "protein_mpnn" --output_dir $(pwd)/examples/monomer/HalluDesign_op --num_seqs 2 --num_recycles 10 --ref_time_steps 50
 
 ## Cross model
-export CC=$(which gcc) && export CXX=$(which g++) && python ./HalluDesign_run.py --HalluDesign_model cross_model --input_file examples/monomer/monomer.pdb --template_path examples/monomer/template_und_protenix.json  --extra_json_path examples/monomer/template_und.json --mpnn "protein_mpnn" --output_dir $(pwd)/examples/monomer/HalluDesign_op --num_seqs 2 --num_recycles 10 --ref_time_steps 50 --design_epoch_begin 8
+export CC=$(which gcc) && export CXX=$(which g++) && python ./HalluDesign_run.py --HalluDesign_model cross_model --input_file examples/monomer/monomer.pdb --template_path examples/monomer/template_und_protenix.json  --extra_json_path examples/monomer/template_und.json --mpnn "protein_mpnn" --output_dir $(pwd)/examples/monomer/HalluDesign_op --num_seqs 2 --num_recycles 10 --ref_time_steps 150 --design_epoch_begin 8
 
 # Protein binder optmization exmample
 export PATH=$(python -c "import site; print(site.getsitepackages()[0] + '/nvidia/cuda_nvcc/bin')"):$PATH && python ./HalluDesign_run.py --HalluDesign_model af3 --input_file examples/protein_binder/Pdl1_binder_design_5.pdb --template_path examples/protein_binder/pdl1_protein.json --mpnn "protein_mpnn" --output_dir $(pwd)/examples/protein_binder/HalluDesign_op --fix_chain_index "B" --num_seqs 2 --num_recycles 10 --ref_time_steps 50 
@@ -54,3 +54,8 @@ export CC=$(which gcc) && export CXX=$(which g++) && python ./HalluDesign_run.py
 # Repeat protein design example
 export CC=$(which gcc) && export CXX=$(which g++) && python ./HalluDesign_run.py --HalluDesign_model cross_model --input_file examples/monomer/monomer.pdb --template_path examples/monomer/template_und_protenix.json  --mpnn "protein_mpnn" --output_dir $(pwd)/examples/monomer/HalluDesign_op --num_seqs 2 --num_recycles 10 --ref_time_steps 150 --random_init --symmetry_segments 4
 
+# enzyme design epoch1 example, you should replace enzyem_protenix_batch_1.json sm_molecular with your own path
+export CC=$(which gcc) && export CXX=$(which g++) && python ./HalluDesign_run.py --HalluDesign_model cross_model --input_file examples/enzyme_design/peptide_l160_1_hpos_39_43_114.pdb --template_path examples/enzyme_design/enzyem_protenix_batch_1.json  --extra_json_path examples/enzyme_design/enzyem_af3_batch_1.json  --mpnn "ligand_mpnn" --output_dir $(pwd)/examples/enzyme_design/HalluDesign_op --num_seqs 2 --num_recycles 10 --ref_time_steps 150 --design_epoch_begin 12 --random_init --enzyme_design
+
+# enzyme design epoch2 example 
+export PATH=$(python -c "import site; print(site.getsitepackages()[0] + '/nvidia/cuda_nvcc/bin')"):$PATH && python ./HalluDesign_run.py --HalluDesign_model af3 --input_file examples/enzyme_design/peptide_l160_1_hpos_39_43_114.pdb --template_path examples/enzyme_design/enzyem_af3_batch_1.json --sm "[Zn+2]" "CCCC(O)(OC1C=CC2C(C)=CC(OC=2C=1)=O)O" --template_for_eval examples/enzyme_design/enzyem_af3_batch_2.json --mpnn "ligand_mpnn" --output_dir $(pwd)/examples/enzyme_design/HalluDesign_op --num_seqs 2 --num_recycles 10 --ref_time_steps 150 --design_epoch_begin 7  --enzyme_design

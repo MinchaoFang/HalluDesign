@@ -100,6 +100,8 @@ def parse_arguments():
                     help="for ptm design")
     parser.add_argument("--random_init", action='store_true', default=False,
                     help="for pure noise generation")
+    parser.add_argument("--enzyme_design", action='store_true', default=False,
+                    help="for enzyme design")
     return parser.parse_args()
 
 
@@ -205,7 +207,11 @@ def main():
     if args.HalluDesign_model  == "af3":
         from af3_model import AF3DesignerPack
         Designer_model = AF3DesignerPack(jax_compilation_dir=os.path.join(args.output_dir,"jax_compilation_cache_dir"))
-        protein_chains, ligand_chains, dna_chains, rna_chains, chain_types =  count_chain_based_on_json_af3(args.template_path)
+        if args.template_for_eval:
+            template_path_for_eval = args.template_for_eval
+        else:
+            template_path_for_eval = args.template_path
+        protein_chains, ligand_chains, dna_chains, rna_chains, chain_types =  count_chain_based_on_json_af3(template_path_for_eval)
         metrics = generate_metrics(protein_chains,ligand_chains, dna_chains, rna_chains,chain_types)
     if args.HalluDesign_model  == "protenix" or args.HalluDesign_model == "cross_model":
         #sys.path.insert(0,os.path.join(current_dir,"Protenix"))
@@ -259,8 +265,9 @@ def main():
     
                 if not bias.empty:
                     bais_per_residues = ast.literal_eval(bias.values[0])
-                    
-            
+        if args.enzyme_design:         
+            fixed_residues = parse_his_positions_from_pdb_filename(pdb_file)
+            print(fixed_residues)    
         for cycle in range(args.num_recycles):
             print(f"  Starting cycle {cycle+1}")
             try:
@@ -302,6 +309,7 @@ def main():
                     args.cyclic,
                     args.replace_MSA,
                     args.ptm,
+                    args.enzyme_design,
                     run_af3=not is_last_cycle  #  AF3 not run in last cycle
                 )
                 elif args.HalluDesign_model  == "protenix":
@@ -365,6 +373,7 @@ def main():
                     cyclic=args.cyclic,
                     ptm=args.ptm,
                     random_init=args.random_init,
+                    enzyme_design=args.enzyme_design,
                     run_af3=not is_last_cycle
                 )
                 all_results.append(metrics)
