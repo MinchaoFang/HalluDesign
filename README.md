@@ -80,6 +80,24 @@ Pytorch-based CoDP may has GPU memory problem with jax-based AF3, so we command 
 git clone https://github.com/MinchaoFang/CoDP.git
 ```
 
+### Small molecular binder design scaffold source
+
+This repository had used structural scaffolds for small molecular binder design, including pseudocycle backbones and NTF2-based scaffolds.
+
+Pseudocycle Backbone (Proteus2) 
+Generated backbone structures are available at: https://zenodo.org/records/19050840
+
+NTF2 Scaffolds
+Download from:
+https://files.ipd.uw.edu/pub/luxSit/scaffolds.tar.gz
+
+If you use the NTF2 scaffolds, please cite:
+
+Yeh, A.H.W., Norn, C., Kipnis, Y. et al.
+De novo design of luciferases using deep learning.
+Nature 614, 774–780 (2023).
+https://doi.org/10.1038/s41586-023-05696-3
+
 # Reference
 
 ```bibtex
