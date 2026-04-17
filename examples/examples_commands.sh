@@ -59,3 +59,7 @@ export CC=$(which gcc) && export CXX=$(which g++) && python ./HalluDesign_run.py
 
 # enzyme design epoch2 example 
 export PATH=$(python -c "import site; print(site.getsitepackages()[0] + '/nvidia/cuda_nvcc/bin')"):$PATH && python ./HalluDesign_run.py --HalluDesign_model af3 --input_file examples/enzyme_design/peptide_l160_1_hpos_39_43_114.pdb --template_path examples/enzyme_design/enzyem_af3_batch_1.json --sm "[Zn+2]" "CCCC(O)(OC1C=CC2C(C)=CC(OC=2C=1)=O)O" --template_for_eval examples/enzyme_design/enzyem_af3_batch_2.json --mpnn "ligand_mpnn" --output_dir $(pwd)/examples/enzyme_design/HalluDesign_op --num_seqs 2 --num_recycles 10 --ref_time_steps 150 --design_epoch_begin 7  --enzyme_design
+
+# optimization binding affinity example, please check more in the data_preprocess.ipynb for how to prepare the bias summary csv file and use --fix_seq_file to incorporate the binding affinity information into design
+export PATH=$(python -c "import site; print(site.getsitepackages()[0] + '/nvidia/cuda_nvcc/bin')"):$PATH && python ./HalluDesign_run.py --HalluDesign_model af3 --input_file examples/ligand_binder/protein_ligand.pdb --template_path examples/ligand_binder/template_CCD.json --mpnn "ligand_mpnn" --ccd "CMP" --output_dir $(pwd)/examples/ligand_binder/HalluDesign_op_ccd --num_seqs 2 --num_recycles 4 --ref_time_steps 50 --fix_seq_file examples/ligand_binder/bias_summary_1_2_re.csv
+
