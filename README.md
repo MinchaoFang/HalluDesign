@@ -74,6 +74,11 @@ cd LigandMPNN
 bash get_model_params.sh "./model_params"
 ```
 
+If you encounter a ModuleNotFoundError for pkg_resources, install setuptools in your environment:
+```
+pip install setuptools
+```
+
 ## If you want to use CoDP (Optional)
 Pytorch-based CoDP may has GPU memory problem with jax-based AF3, so we command use pytorch-based Protenix as our foundationl model.
 ```
