@@ -45,14 +45,8 @@ def find_all_sequence_residues_in_pdb(pdb_file_path: str, query_sequences: list[
                               all residue identifiers (chain ID + residue index) for every 
                               matching instance found in the structure.
                               
-                              Example:
-                                  {
-                                      "AK": ["A1", "A2"],
-                                      "ST": ["A3", "A4"],
-                                      "GV": ["B1", "B2"],
-                                      "KST": ["A2", "A3", "A4"]
-                                  }
-
+                              Example: ["A1", "A2"]
+                                      
                               If a query sequence is not found, it will not appear 
                               as a key in the returned dictionary.
     """

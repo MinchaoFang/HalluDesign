@@ -207,7 +207,7 @@ def main():
     if args.HalluDesign_model  == "af3":
         from af3_model import AF3DesignerPack
         Designer_model = AF3DesignerPack(jax_compilation_dir=os.path.join(args.output_dir,"jax_compilation_cache_dir"))
-        if args.template_for_eval:
+        if args.template_for_eval is not None:
             template_path_for_eval = args.template_for_eval
         else:
             template_path_for_eval = args.template_path

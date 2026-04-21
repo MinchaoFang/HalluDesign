@@ -370,7 +370,6 @@ def sample(
   def apply_denoising_step(carry, noise_level):
     key, positions, noise_level_prev = carry
     key, key_noise, key_aug = jax.random.split(key, 3)
-    print()
     positions = random_augmentation(
         rng_key=key_aug, positions=positions, mask=mask
     )
@@ -436,12 +435,10 @@ def sample(
     )
     result_noise, _ = hk.scan(apply_denoising_step, init, noise_levels[1:], unroll=4)
     _, positions_noise, _ = result_noise
-    print(positions_noise.shape)
     positions_out = jnp.concatenate((positions_ref, positions_noise), axis=0)
   elif hasattr(config, "ref_time_steps") and batch.ref_pdb != None:
     print(f"ref_guided diffusion {config.steps-config.ref_time_steps} - {config.steps} steps")
     start_noise_level = noise_levels[config.steps-config.ref_time_steps]
-    print(noise_levels)
     ref_positions = center_and_scale_reference(
             batch.ref_pdb,
             mask,
@@ -468,7 +465,6 @@ def sample(
     )
     result, _ = hk.scan(apply_denoising_step, init, noise_levels[1:], unroll=4)
     _, positions_out, _ = result
-  print(positions_out.shape)
 
   final_dense_atom_mask = jnp.tile(mask[None], (config.num_samples, 1, 1))
     
