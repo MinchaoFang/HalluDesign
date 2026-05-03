@@ -861,7 +861,7 @@ try:
                 dump_result = pkl_path.replace(".pkl", "_ref_eval_result.pkl")
                 if ref_time_steps == 200:
                     print("pure prediction")
-                    run_AF3_evaluation_with_ref_eval(output_dir,
+                    run_AF3_evaluation_with_ref_eval(target_dir,
                                                     json_path,
                                                     None, 
                                                     dump_result, 
@@ -869,14 +869,14 @@ try:
                                                     cyclic, )
                 elif cycle == 0 and random_init:
                     print("pure prediction")
-                    run_AF3_evaluation_with_ref_eval(output_dir,
+                    run_AF3_evaluation_with_ref_eval(target_dir,
                                                     json_path,
                                                     None, 
                                                     dump_result, 
                                                     ref_time_steps, 5,
                                                     cyclic, )
                 else:
-                    run_AF3_evaluation_with_ref_eval(output_dir,
+                    run_AF3_evaluation_with_ref_eval(target_dir,
                                                     json_path,
                                                     pkl_path, 
                                                     dump_result, 
@@ -890,7 +890,7 @@ try:
                     
                     # get output path
                     tag =f"{tag}".lower()
-                    cif_path = os.path.join(target_dir, tag.replace(".pdb", ""), 
+                    cif_path = os.path.join(target_dir, tag.replace(".pdb", ""), tag.replace(".pdb", ""), 
                                           tag.replace(".pdb", "") + "_model.cif")
                     
                     metrics = process_confidence_metrics_af3(results_op,
@@ -926,7 +926,7 @@ import os
 def run_AF3_evaluation_with_ref_eval(output_dir, json_path, pkl_path, dump_result,
                                      ref_time_steps, num_samples, cyclic=1):
     try:
-        # 以当前工作目录为基础
+
         af3_script = Path("eval") / "af3_init.py"
 
         if not af3_script.exists():

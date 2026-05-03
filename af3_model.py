@@ -388,9 +388,9 @@ def write_outputs(
   max_ranking_score = None
   max_ranking_result = None
 
-  output_terms = (
-      pathlib.Path(alphafold3.cpp.__file__).parent / 'OUTPUT_TERMS_OF_USE.md'
-  ).read_text()
+  #output_terms = (
+  #    pathlib.Path(alphafold3.cpp.__file__).parent / 'OUTPUT_TERMS_OF_USE.md'
+  #).read_text()
 
   os.makedirs(output_dir, exist_ok=True)
   for results_for_seed in all_inference_results:
