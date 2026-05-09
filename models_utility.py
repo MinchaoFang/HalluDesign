@@ -66,7 +66,7 @@ def af3_op_af3_eval(pdb_file: str,
         else:
             shutil.copy(source_file, copied_file)
         chain_number_list_cdr = copy.deepcopy(chain_number_list)
-        metrics["oringin_path"] = os.path.join(output_dir, "recycle_1", metrics['file_name']+"_recycle_1.pdb")
+        metrics["origin_path"] = os.path.join(output_dir, "recycle_1", metrics['file_name']+"_recycle_1.pdb")
         # for fixed chains and residues, fixed res will be recognized as fixed_residues_for_MPNN to fix
         fixed_residues_for_MPNN = []
         print(chain_number_list)
@@ -284,7 +284,7 @@ def af3_op_af3_eval(pdb_file: str,
             
             metrics = process_confidence_metrics_af3(results_op,
                                                      cif_path, copied_file,
-                                                     metrics[0]["oringin_path"],
+                                                     metrics[0]["origin_path"],
                                                      metrics,
                                                      pocket_res,
                                                      chain_types,
@@ -365,7 +365,7 @@ try:
             else:
                 shutil.copy(source_file, copied_file)
             chain_number_list_cdr = copy.deepcopy(chain_number_list)
-            metrics["oringin_path"] = os.path.join(output_dir, "recycle_1", metrics['file_name']+"_recycle_1.pdb")
+            metrics["origin_path"] = os.path.join(output_dir, "recycle_1", metrics['file_name']+"_recycle_1.pdb")
             # for fixed chains and residues, fixed res will be recognized as fixed_residues_for_MPNN res to fix
             fixed_residues_for_MPNN = []
             print(chain_number_list)
@@ -523,7 +523,7 @@ try:
                     cif_path = os.path.join(target_dir,tag,"seed_123","predictions",f"{tag}_seed_123_sample_0.cif")
                     metrics = process_confidence_metrics_protenix(results_op,
                                                              cif_path, copied_file,
-                                                             metrics[0]["oringin_path"],
+                                                             metrics[0]["origin_path"],
                                                              metrics,
                                                              pocket_res,
                                                              chain_types,
@@ -601,7 +601,7 @@ try:
             else:
                 shutil.copy(source_file, copied_file)
             chain_number_list_cdr = copy.deepcopy(chain_number_list)
-            metrics["oringin_path"] = os.path.join(output_dir, "recycle_1", metrics['file_name']+"_recycle_1.pdb")
+            metrics["origin_path"] = os.path.join(output_dir, "recycle_1", metrics['file_name']+"_recycle_1.pdb")
             # for fixed chains and residues, fixed res will be recognized as fixed_residues_for_MPNN res to fix
             fixed_residues_for_MPNN = []
             print(chain_number_list)
@@ -771,7 +771,7 @@ try:
                     cif_path = os.path.join(target_dir,tag,"seed_123","predictions",f"{tag}_seed_123_sample_0.cif")
                     metrics = process_confidence_metrics_protenix(results_op,
                                                              cif_path, copied_file,
-                                                             metrics[0]["oringin_path"],
+                                                             metrics[0]["origin_path"],
                                                              metrics,
                                                              pocket_res,
                                                              chain_types,
@@ -895,7 +895,7 @@ try:
                     
                     metrics = process_confidence_metrics_af3(results_op,
                                                              cif_path, copied_file,
-                                                             metrics[0]["oringin_path"],
+                                                             metrics[0]["origin_path"],
                                                              metrics,
                                                              pocket_res,
                                                              chain_types,

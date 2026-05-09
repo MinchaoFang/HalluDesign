@@ -7,7 +7,7 @@ HalluDesign, a hallucination-driven all-atom framework for the iterative co-opti
 
 Development and exploratory implementations are available in the `dev` branch.
 
-More examples can check in examples/
+We provide an `input_output.md` file for clarity. More examples can be found in the `examples/` directory.
 ```
 python HalluDesign_run.py 
 --input_file <pdbfile> or --pdb_list <pdblist>
@@ -76,7 +76,7 @@ bash get_model_params.sh "./model_params"
 
 If you encounter a ModuleNotFoundError for pkg_resources, install setuptools in your environment:
 ```
-pip install setuptools
+conda install setuptools=68.2.2 -y
 ```
 
 ## If you want to use CoDP (Optional)
