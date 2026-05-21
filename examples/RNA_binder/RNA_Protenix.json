@@ -1,0 +1,19 @@
+[{
+    "sequences": [
+        {
+            "proteinChain": {
+                "sequence": "MAEVIRSSAFWRSFPIFEEFDSETLCELSGIASYRKWSAGTVIFQRGDQGDYMIVVVSGRIKLSLFTPQGRELMLRQHEAGALFGEMALLDGQPRSADATAVTAAEGYVIGKKDFLALITQRPKTAEAVIRFLCAQLRDTTDRLETIALYDLNARVARFFLATLRQIHGSEMPQSANLRLTLSQTDIASILGASRPKVNRAILSLEESGAIKRADGIICCNVGRLLSIADPEEDLEHHHHHHHH",
+                "count": 1
+            }
+        },
+        {
+            "rnaSequence": {
+                "sequence": "CTAGGTAACATTACTCGCG",
+                "count": 1
+            }
+        }
+    ],
+    "name": "7pzb_need_search_msa"
+}
+]
+

@@ -1,0 +1,24 @@
+{
+    "name": "gd_dimer",
+    "sequences": [
+      {
+        "protein": {
+          "id": ["A"],
+          "sequence": "NPYARGPNPTAASLEASAGPFTVRSFTVSRPSGYGAGTVYYPTNAGGTVGAIAIVPGYTARQSSSIKWWGPRLASHGFVVITIDTNSTLDQPSSSRSSQQMAALGQVASLNGTSSSPIYGKVDTARMMGVMGWAMGGGGSLISAANNPSSLKAAAPQAPWDSSTNFSSVTVPTLIFACENDSSIAPVNSSSALPIYDSMSRNAKQFLEINGGSHSCANSGNSNQALIGKKGVAWMKRFMDNDTRYSTFACENPNSTRVSDFRTANCS",
+          "unpairedMsa": "",
+          "pairedMsa": "",
+          "templates": []
+        }
+      },{
+  "rna": {
+    "id": "B",
+    "sequence": "AGCU",
+    "unpairedMsa": ""
+  }
+}
+    ],
+    "modelSeeds": [1],
+    "dialect": "alphafold3",
+    "version": 1
+  }
+
