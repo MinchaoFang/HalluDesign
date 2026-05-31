@@ -107,6 +107,8 @@ def parse_arguments():
 
 def main():
     args = parse_arguments()
+    args.output_dir = os.path.abspath(os.path.expanduser(args.output_dir))
+    os.makedirs(args.output_dir, exist_ok=True)
     
     if not os.path.exists(args.template_path):
         raise FileNotFoundError(f"Template file {args.template_path} not found!")
