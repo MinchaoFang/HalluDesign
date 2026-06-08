@@ -10,6 +10,130 @@ import json
 import re
 import pickle
 from local_scripts.input_pkl_preprocess import process_single_file
+
+
+def _build_af3_random_init_json(template_path, json_path, tag, random_init_sequences,
+                                chain_types, sm, ccd, dna, rna):
+    with open(template_path, 'r') as f:
+        input_json = copy.deepcopy(json.load(f))
+
+    input_json['name'] = tag
+    count = 0
+    sm_count = 0
+    rna_count = 0
+    dna_count = 0
+    protein_count = 0
+    chain_labels = string.ascii_uppercase[:10]
+    for chain in chain_types:
+        if chain == "protein":
+            chain_id = chain_labels[protein_count]
+            if chain_id in random_init_sequences:
+                input_json['sequences'][count]['protein']["sequence"] = random_init_sequences[chain_id]
+            protein_count += 1
+        if chain == 'ligand':
+            if ccd:
+                input_json['sequences'][count]["ligand"]["ccdCodes"] = [ccd[sm_count]]
+            elif sm:
+                input_json['sequences'][count]["ligand"]["smiles"] = sm[sm_count]
+            sm_count += 1
+        if chain == 'dna':
+            input_json['sequences'][count]["dna"]["sequence"] = dna[dna_count]
+            dna_count += 1
+        if chain == 'rna':
+            input_json['sequences'][count]["rna"]["sequence"] = rna[rna_count]
+            rna_count += 1
+        count += 1
+
+    input_json["modelSeeds"] = get_random_seeds(1)
+    with open(json_path, 'w') as f:
+        json.dump(input_json, f, indent=2)
+
+
+def _build_protenix_random_init_json(template_path, json_path, tag,
+                                     random_init_sequences, chain_types,
+                                     sm, dna, rna):
+    with open(template_path, 'r') as f:
+        input_json = copy.deepcopy(json.load(f))
+
+    input_json[0]['name'] = tag
+    count = 0
+    sm_count = 0
+    rna_count = 0
+    dna_count = 0
+    protein_count = 0
+    chain_labels = string.ascii_uppercase[:10]
+    for chain in chain_types:
+        if chain == "protein":
+            chain_id = chain_labels[protein_count]
+            if chain_id in random_init_sequences:
+                input_json[0]['sequences'][count]['proteinChain']["sequence"] = random_init_sequences[chain_id]
+            protein_count += 1
+        if chain == 'ligand':
+            if sm:
+                input_json[0]['sequences'][count]["ligand"]["ligand"] = sm[sm_count]
+            sm_count += 1
+        if chain == 'dna':
+            input_json[0]['sequences'][count]["dnaSequence"]["sequence"] = dna[dna_count]
+            dna_count += 1
+        if chain == 'rna':
+            input_json[0]['sequences'][count]["rnaSequence"]["sequence"] = rna[rna_count]
+            rna_count += 1
+        count += 1
+
+    with open(json_path, 'w') as f:
+        json.dump(input_json, f, indent=2)
+
+
+def _make_af3_random_init_pdb(AF3Designer_model, target_dir, template_path,
+                              file_tag, cycle, random_init_sequences,
+                              chain_types, sm, ccd, dna, rna, cyclic):
+    init_tag = f"{file_tag}_recycle_{cycle+1}_init"
+    json_path = os.path.join(target_dir, f"{init_tag}.json")
+    _build_af3_random_init_json(
+        template_path, json_path, init_tag, random_init_sequences,
+        chain_types, sm, ccd, dna, rna
+    )
+    print(f"AF3 random-init pure prediction: {json_path}")
+    results = AF3Designer_model.single_file_process(
+        json_path=json_path,
+        out_dir=target_dir,
+        ref_pdb_path=None,
+        ref_time_steps=200,
+        cyclic=cyclic,
+        num_samples=5,
+    )
+    cif_path = os.path.join(target_dir, init_tag, f"{init_tag}_model.cif")
+    pdb_path = os.path.join(target_dir, f"{init_tag}.pdb")
+    if not results or not convert_cif_to_pdb(cif_path, pdb_path):
+        raise RuntimeError(f"AF3 random-init prediction failed for {file_tag}")
+    return pdb_path
+
+
+def _make_protenix_random_init_pdb(Designer_model, target_dir, template_path,
+                                   file_tag, cycle, random_init_sequences,
+                                   chain_types, sm, dna, rna):
+    init_tag = f"{file_tag}_recycle_{cycle+1}_init"
+    json_path = os.path.join(target_dir, f"{init_tag}.json")
+    _build_protenix_random_init_json(
+        template_path, json_path, init_tag, random_init_sequences,
+        chain_types, sm, dna, rna
+    )
+    print(f"Protenix random-init pure prediction: {json_path}")
+    results = Designer_model.predict(
+        input_json_path=json_path,
+        dump_dir=target_dir,
+        seed=123,
+    )
+    cif_path = os.path.join(
+        target_dir, init_tag, "seed_123", "predictions",
+        f"{init_tag}_seed_123_sample_0.cif"
+    )
+    pdb_path = os.path.join(target_dir, f"{init_tag}.pdb")
+    if not results or not convert_cif_to_pdb(cif_path, pdb_path):
+        raise RuntimeError(f"Protenix random-init prediction failed for {file_tag}")
+    return pdb_path
+
+
 def af3_op_af3_eval(pdb_file: str, 
                       cycle: int,
                       output_dir: str,
@@ -40,15 +164,27 @@ def af3_op_af3_eval(pdb_file: str,
                       replace_MSA,
                       ptm,
                       enzyme_design,
-                      run_af3: bool = True) -> Dict:
+                      run_af3: bool = True,
+                      random_init_sequences=None,
+                      random_init_file_tag=None) -> Dict:
     """single pdb single cycle"""
     
     try:
+        copied_file = pdb_file
 
         target_dir = os.path.join(output_dir, f"recycle_{cycle+1}")
         os.makedirs(target_dir, exist_ok=True)
 
-        source_file = copy.deepcopy(pdb_file)
+        if pdb_file is None:
+            if cycle != 0 or not random_init_sequences or not random_init_file_tag:
+                raise ValueError("No-PDB random init requires cycle 0 random_init_sequences and random_init_file_tag.")
+            source_file = _make_af3_random_init_pdb(
+                AF3Designer_model, target_dir, template_path, random_init_file_tag,
+                cycle, random_init_sequences, chain_types, sm, ccd, dna, rna, cyclic
+            )
+            pdb_file = random_init_file_tag
+        else:
+            source_file = copy.deepcopy(pdb_file)
         
         metrics["cycle"] =cycle
         
@@ -167,7 +303,7 @@ def af3_op_af3_eval(pdb_file: str,
         for chain in chain_types:
             if chain == "protein":
                 if chain_labels[protein_count] not in fixed_chains:
-                    if random_init and cycle == 0:
+                    if random_init and cycle == 0 and random_init_sequences is None:
                         input_json['sequences'][count]['protein']["sequence"] = random_protein_sequence(get_chain_sequence(copied_file,chain_labels[protein_count]),fixed_residues_for_MPNN, chain_labels[protein_count])
                     else:
                         input_json['sequences'][count]['protein']["sequence"] = get_chain_sequence(copied_file,chain_labels[protein_count])
@@ -260,7 +396,7 @@ def af3_op_af3_eval(pdb_file: str,
                                             ref_time_steps =200,
                                             cyclic=cyclic,
                                             num_samples=5)
-        elif cycle == 0 and random_init:
+        elif cycle == 0 and random_init and random_init_sequences is None:
             print("pure prediction")
             results_op= AF3Designer_model.single_file_process(json_path=json_path,
                                               out_dir=target_dir,
@@ -340,15 +476,27 @@ try:
                       chain_number_list_cdr,
                       cyclic,
                       random_init,
-                      run_af3: bool = True) -> Dict:
+                      run_af3: bool = True,
+                      random_init_sequences=None,
+                      random_init_file_tag=None) -> Dict:
         """Process a single PDB file in one iteration"""
 
         try:
+            copied_file = pdb_file
 
             target_dir = os.path.join(output_dir, f"recycle_{cycle+1}")
             os.makedirs(target_dir, exist_ok=True)
 
-            source_file = copy.deepcopy(pdb_file)
+            if pdb_file is None:
+                if cycle != 0 or not random_init_sequences or not random_init_file_tag:
+                    raise ValueError("No-PDB random init requires cycle 0 random_init_sequences and random_init_file_tag.")
+                source_file = _make_protenix_random_init_pdb(
+                    Designer_model, target_dir, template_path, random_init_file_tag,
+                    cycle, random_init_sequences, chain_types, sm, dna, rna
+                )
+                pdb_file = random_init_file_tag
+            else:
+                source_file = copy.deepcopy(pdb_file)
             metrics["cycle"] =cycle
             print(pdb_file)
             pdb_file = os.path.basename(pdb_file).lower().replace(".pdb","")
@@ -464,7 +612,7 @@ try:
                     print("no protenix evaluation")
                     if chain == 'protein':
                         if chain_labels[protein_count] not in fixed_chains:
-                            if random_init and cycle == 0:
+                            if random_init and cycle == 0 and random_init_sequences is None:
                                 input_json[0]['sequences'][count]['proteinChain']["sequence"]  = random_protein_sequence(get_chain_sequence(copied_file,chain_labels[protein_count]),fixed_residues_for_MPNN, chain_labels[protein_count])
                             else:
                                 input_json[0]['sequences'][count]['proteinChain']["sequence"] = get_chain_sequence(copied_file,chain_labels[protein_count])
@@ -495,7 +643,7 @@ try:
                 print(pred_coordinates_tensor.shape)
 
                 torch.save(pred_coordinates_tensor,pkl_path)
-                if cycle == 0 and random_init:
+                if cycle == 0 and random_init and random_init_sequences is None:
                     results_op=Designer_model.predict(
                     input_json_path=json_path,
                     dump_dir=target_dir,
@@ -577,14 +725,27 @@ try:
         ptm,
         random_init,
         enzyme_design,
-        run_af3: bool = True) -> Dict:
+        run_af3: bool = True,
+        random_init_sequences=None,
+        random_init_file_tag=None) -> Dict:
         """Process a single PDB file in one iteration"""
 
         try:
+            copied_file = pdb_file
+
             target_dir = os.path.join(output_dir, f"recycle_{cycle+1}")
             os.makedirs(target_dir, exist_ok=True)
 
-            source_file = copy.deepcopy(pdb_file)
+            if pdb_file is None:
+                if cycle != 0 or not random_init_sequences or not random_init_file_tag:
+                    raise ValueError("No-PDB random init requires cycle 0 random_init_sequences and random_init_file_tag.")
+                source_file = _make_protenix_random_init_pdb(
+                    Designer_model, target_dir, template_path, random_init_file_tag,
+                    cycle, random_init_sequences, chain_types, sm, dna, rna
+                )
+                pdb_file = random_init_file_tag
+            else:
+                source_file = copy.deepcopy(pdb_file)
             metrics["cycle"] =cycle
             print(pdb_file)
             pdb_file = os.path.basename(pdb_file).lower().replace(".pdb","")
@@ -701,7 +862,7 @@ try:
                 for chain in chain_types:
                     if chain == 'protein':
                         if chain_labels[protein_count] not in fixed_chains:
-                            if random_init and cycle == 0:
+                            if random_init and cycle == 0 and random_init_sequences is None:
                                 input_json[0]['sequences'][count]['proteinChain']["sequence"]  = random_protein_sequence(get_chain_sequence(copied_file,chain_labels[protein_count]),fixed_residues_for_MPNN, chain_labels[protein_count])
                             else:
                                 input_json[0]['sequences'][count]['proteinChain']["sequence"] = get_chain_sequence(copied_file,chain_labels[protein_count])
@@ -743,7 +904,7 @@ try:
                 print(pred_coordinates_tensor.shape)
 
                 torch.save(pred_coordinates_tensor,pkl_path)
-                if cycle == 0 and random_init:
+                if cycle == 0 and random_init and random_init_sequences is None:
                     results_op=Designer_model.predict(
                     input_json_path=json_path,
                     dump_dir=target_dir,
@@ -809,7 +970,7 @@ try:
                 for chain in chain_types:
                     if chain == "protein":
                         if chain_labels[protein_count] not in fixed_chains:
-                            if random_init and cycle == 0:
+                            if random_init and cycle == 0 and random_init_sequences is None:
                                 input_json['sequences'][count]['protein']["sequence"] = random_protein_sequence(get_chain_sequence(copied_file,chain_labels[protein_count]),fixed_residues_for_MPNN, chain_labels[protein_count])
                             else:
                                 input_json['sequences'][count]['protein']["sequence"] = get_chain_sequence(copied_file,chain_labels[protein_count])
@@ -867,7 +1028,7 @@ try:
                                                     dump_result, 
                                                     ref_time_steps, 5,
                                                     cyclic, )
-                elif cycle == 0 and random_init:
+                elif cycle == 0 and random_init and random_init_sequences is None:
                     print("pure prediction")
                     run_AF3_evaluation_with_ref_eval(target_dir,
                                                     json_path,
