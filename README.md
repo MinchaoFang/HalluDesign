@@ -110,7 +110,7 @@ A version of HalluDesign tailored for nucleic acid (NA) design tasks.
 
 HalluDesign-ESMFold2: https://github.com/MinchaoFang/HalluDesign_esmfold2
 
-The implementation of HalluDesign integrated with ESMFold2 for protein design.
+An implementation of HalluDesign integrated with ESMFold2 for protein design, intended for users who may encounter licensing issues with AlphaFold3.
 # Reference
 
 ```bibtex
