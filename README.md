@@ -103,6 +103,14 @@ De novo design of luciferases using deep learning.
 Nature 614, 774–780 (2023).
 https://doi.org/10.1038/s41586-023-05696-3
 
+## Related work
+HalluDesign-NA: https://github.com/MinchaoFang/HalluDesign_NA
+
+A version of HalluDesign tailored for nucleic acid (NA) design tasks.
+
+HalluDesign-ESMFold2: https://github.com/MinchaoFang/HalluDesign_esmfold2
+
+The implementation of HalluDesign integrated with ESMFold2 for protein design.
 # Reference
 
 ```bibtex
