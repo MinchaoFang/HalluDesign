@@ -388,38 +388,36 @@ def self_consistency_af3(scaffold_path,
 
         # Write the new JSON file
         if replace_MSA:
-            #msa=f'>query\n{input_json["sequences"][chain]["protein"]["sequence"]}\n'
-            #originMSA = input_json['sequences'][chain]['protein']["unpairedMsa"]
-#
-            #input_json['sequences'][chain]['protein']["unpairedMsa"] = msa
-#
-            ## Get old MSA
-            origin_msa = input_json['sequences'][0]['protein']['unpairedMsa'].strip().splitlines()
+            for _N in range(protein_count):
+                try:
+                    print(f"chain{_N} have MSA")
+                    origin_msa = input_json['sequences'][_N]['protein']['unpairedMsa'].strip().splitlines()
 
-            # new query sequence
-            new_query_seq = input_json['sequences'][0]['protein']['sequence']
+                    # new query 
+                    new_query_seq = input_json['sequences'][_N]['protein']['sequence']
 
-            # Find the first line starting with '>', which is the description line of the first sequence
-            msa_lines = []
-            i = 0
-            while i < len(origin_msa):
-                if origin_msa[i].startswith('>'):
-                    if i == 0:  # Replace the first sequence
-                        msa_lines.append('>query')
-                        msa_lines.append(new_query_seq)
-                        # Skip the sequence lines of the old query
+                    msa_lines = []
+                    i = 0
+                    while i < len(origin_msa):
+                        if origin_msa[i].startswith('>'):
+                            if i == 0:  # replace first MSA
+                                msa_lines.append('>query')
+                                msa_lines.append(new_query_seq)
+                                i += 1
+                                while i < len(origin_msa) and not origin_msa[i].startswith('>'):
+                                    i += 1
+                                continue
+                            else:
+                                msa_lines.append(origin_msa[i])
+                        else:
+                            msa_lines.append(origin_msa[i])
                         i += 1
-                        while i < len(origin_msa) and not origin_msa[i].startswith('>'):
-                            i += 1
-                        continue
-                    else:
-                        msa_lines.append(origin_msa[i])
-                else:
-                    msa_lines.append(origin_msa[i])
-                i += 1
 
-            # # Update input_json
-            input_json['sequences'][0]['protein']['unpairedMsa'] = '\n'.join(msa_lines) + '\n'
+                    # update input_json
+                    input_json['sequences'][_N]['protein']['unpairedMsa'] = '\n'.join(msa_lines) + '\n'
+                except:
+                    print(f"chain{_N} no MSA")
+
 
         with open(json_path, 'w') as f:
             json.dump(input_json, f, indent=2)
