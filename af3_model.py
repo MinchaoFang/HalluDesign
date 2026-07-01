@@ -20,6 +20,31 @@ import os
 #src_folder = os.path.join(current_folder, 'src')
 #sys.path.insert(0, src_folder)
 import numpy as np
+
+
+def _install_numpy_stack_dtype_compat() -> None:
+    """Support AF3 code using np.stack(..., dtype=...) on older NumPy."""
+    try:
+        np.stack([[1], [2]], dtype=object)
+        return
+    except TypeError as exc:
+        if "dtype" not in str(exc):
+            raise
+
+    original_stack = np.stack
+
+    @functools.wraps(original_stack)
+    def stack_with_dtype(arrays, axis=0, out=None, *, dtype=None, casting="same_kind"):
+        if dtype is None:
+            return original_stack(arrays, axis=axis, out=out)
+        stacked = original_stack(arrays, axis=axis, out=out)
+        return stacked.astype(dtype, casting=casting, copy=False)
+
+    np.stack = stack_with_dtype
+
+
+_install_numpy_stack_dtype_compat()
+
 import jax.numpy as jnp
 from typing import Dict, Tuple, List, Optional
 print(sys.path)
@@ -619,4 +644,3 @@ class AF3DesignerPack:
 
 
   
-
