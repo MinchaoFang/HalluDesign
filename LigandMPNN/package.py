@@ -256,6 +256,17 @@ class MPNNModel:
         else:
             remapped_symmetry_residues = [[]]
 
+        # A per-residue bias on any symmetric representative applies to the
+        # entire group. Reject conflicting explicit biases instead of silently
+        # using whichever residue happens to be decoded last.
+        for group in remapped_symmetry_residues:
+            configured = [i for i in group if torch.any(bias_AA_per_residue[i] != 0)]
+            if configured:
+                source_bias = bias_AA_per_residue[configured[0]].clone()
+                if any(not torch.equal(bias_AA_per_residue[i], source_bias) for i in configured[1:]):
+                    raise ValueError("Conflicting per-residue biases within a symmetry group")
+                bias_AA_per_residue[group] = source_bias
+
         if weights_str:
             symmetry_weights = [
                 [float(item) for item in x.split(",")]
@@ -942,4 +953,3 @@ class MPNNModel:
                 sequences_stack.append(seq_out_str)
                         
         return sequences_stack,pdb_path_stack
-

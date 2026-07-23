@@ -85,6 +85,9 @@ Pytorch-based CoDP may has GPU memory problem with jax-based AF3, so we command 
 git clone https://github.com/MinchaoFang/CoDP.git
 ```
 
+### Available computational resources
+The runtime of HalluDesign primarily depends on the AlphaFold3 (AF3) runtime and the available computational resources. For detailed information regarding AF3 runtime and hardware requirements, please refer to the AlphaFold3 GitHub repository.
+
 ### Small molecular binder design scaffold source
 
 This repository had used structural scaffolds for small molecular binder design, including pseudocycle backbones and NTF2-based scaffolds.
