@@ -32,6 +32,8 @@ class Batch:
   convert_model_output: features.ConvertModelOutput
   frames: features.Frames
   ref_pdb: Optional[jnp.ndarray] = None  
+  motif_fixed_positions: Optional[jnp.ndarray] = None
+  motif_fixed_mask: Optional[jnp.ndarray] = None
   @property
   def num_res(self) -> int:
     return self.token_features.aatype.shape[-1]
@@ -57,7 +59,9 @@ class Batch:
         atom_cross_att=features.AtomCrossAtt.from_data_dict(batch),
         convert_model_output=features.ConvertModelOutput.from_data_dict(batch),
         frames=features.Frames.from_data_dict(batch),
-        ref_pdb=jnp.array(batch["ref_atom_positions"]) if "ref_atom_positions" in batch else None
+        ref_pdb=jnp.array(batch["ref_atom_positions"]) if "ref_atom_positions" in batch else None,
+        motif_fixed_positions=batch.get("motif_fixed_positions"),
+        motif_fixed_mask=batch.get("motif_fixed_mask"),
     )
     
   def as_data_dict(self) -> features.BatchDict:
@@ -75,4 +79,8 @@ class Batch:
         **self.convert_model_output.as_data_dict(),
         **self.frames.as_data_dict(),
     }
+    if self.motif_fixed_positions is not None:
+      output['motif_fixed_positions'] = self.motif_fixed_positions
+    if self.motif_fixed_mask is not None:
+      output['motif_fixed_mask'] = self.motif_fixed_mask
     return output

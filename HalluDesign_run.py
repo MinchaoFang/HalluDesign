@@ -36,6 +36,7 @@ import os
 from filelock import FileLock
 import string
 from models_utility import *
+from motif_constraints import MotifSpec
 
 PROTEIN_ALPHABET = "ACDEFGHIKLMNPQRSTVWY"
 
@@ -111,6 +112,14 @@ def parse_arguments():
                     help="random seed used for no-PDB random-init sequences and lengths")
     parser.add_argument("--enzyme_design", action='store_true', default=False,
                     help="for enzyme design")
+    parser.add_argument("--motif_spec", type=str, default="",
+                    help="Optional JSON motif mapping and constraint configuration")
+    parser.add_argument("--motif_mode", choices=("off", "refine", "scaffold_then_refine"),
+                    default=None, help="Optional override for motif_spec.motif_mode")
+    parser.add_argument("--scaffold_steps", type=int, default=None,
+                    help="Optional override for motif_spec.scaffold_steps")
+    parser.add_argument("--refine_steps", type=int, default=None,
+                    help="Optional override for motif_spec.refine_steps")
     return parser.parse_args()
 
 
@@ -227,6 +236,15 @@ def main():
         args.extra_json_path = os.path.abspath(os.path.expanduser(args.extra_json_path))
     if args.fix_seq_file:
         args.fix_seq_file = os.path.abspath(os.path.expanduser(args.fix_seq_file))
+    if args.motif_spec:
+        args.motif_spec = os.path.abspath(os.path.expanduser(args.motif_spec))
+        motif_spec = MotifSpec.from_file(args.motif_spec).with_runtime_options(
+            motif_mode=args.motif_mode,
+            scaffold_steps=args.scaffold_steps,
+            refine_steps=args.refine_steps,
+        )
+    else:
+        motif_spec = None
     os.makedirs(args.output_dir, exist_ok=True)
     
     if not os.path.exists(args.template_path):
@@ -436,6 +454,16 @@ def main():
                     design_begin = True
                 print(f"begin multi-batch evaluation {design_begin}")
                 metrics = copy.deepcopy(metrics_new)
+                effective_ref_time_steps = (
+                    motif_spec.diffusion_steps_for_cycle(cycle, args.ref_time_steps)
+                    if motif_spec is not None else args.ref_time_steps
+                )
+                if motif_spec is not None:
+                    print(
+                        f"motif phase={motif_spec.phase_for_cycle(cycle)}, "
+                        f"diffusion_steps={effective_ref_time_steps}, "
+                        f"constraints={sorted(motif_spec.constraint_modes)}"
+                    )
                 if args.HalluDesign_model  == "af3":
                     metrics, next_input ,chain_number_list_cdr= af3_op_af3_eval(
                     current_input,
@@ -446,7 +474,7 @@ def main():
                     mpnn_model,
                     mpnn_config_dict,
                     Designer_model,
-                    args.ref_time_steps,
+                    effective_ref_time_steps,
                     chain_types,
                     fixed_chains,
                     fixed_residues,
@@ -470,7 +498,8 @@ def main():
                     args.enzyme_design,
                     run_af3=not is_last_cycle,  #  AF3 not run in last cycle
                     random_init_sequences=random_init_sequences,
-                    random_init_file_tag=random_init_file_tag
+                    random_init_file_tag=random_init_file_tag,
+                    motif_spec=motif_spec,
                 )
                 elif args.HalluDesign_model  == "protenix":
                     metrics, next_input, chain_number_list_cdr = protenix_op_protenix_eval(
@@ -482,7 +511,7 @@ def main():
                     mpnn_model=mpnn_model,
                     mpnn_config_dict=mpnn_config_dict,
                     Designer_model=Designer_model,
-                    ref_time_steps=args.ref_time_steps,
+                    ref_time_steps=effective_ref_time_steps,
                     chain_types=chain_types,
                     fixed_chains=fixed_chains,
                     fixed_residues=fixed_residues,
@@ -502,7 +531,8 @@ def main():
                     random_init=args.random_init,
                     run_af3=not is_last_cycle,
                     random_init_sequences=random_init_sequences,
-                    random_init_file_tag=random_init_file_tag
+                    random_init_file_tag=random_init_file_tag,
+                    motif_spec=motif_spec,
                 )
                 elif args.HalluDesign_model  == "cross_model":
                     metrics, next_input, chain_number_list_cdr = cross_model_op_protenix_eval(
@@ -515,7 +545,7 @@ def main():
                     mpnn_model=mpnn_model,
                     mpnn_config_dict=mpnn_config_dict,
                     Designer_model=Designer_model,
-                    ref_time_steps=args.ref_time_steps,
+                    ref_time_steps=effective_ref_time_steps,
                     chain_types=chain_types,
                     fixed_chains=fixed_chains,
                     fixed_residues=fixed_residues,
@@ -538,7 +568,8 @@ def main():
                     enzyme_design=args.enzyme_design,
                     run_af3=not is_last_cycle,
                     random_init_sequences=random_init_sequences,
-                    random_init_file_tag=random_init_file_tag
+                    random_init_file_tag=random_init_file_tag,
+                    motif_spec=motif_spec,
                 )
                 all_results.append(metrics)
                 current_input = next_input  # update for next cycle

@@ -136,7 +136,9 @@ def sample_diffusion(
     inplace_safe: bool = False,
     attn_chunk_size: Optional[int] = None,
     diffusion_steps: int = 0,
-    input_atom_array_path: str = ""
+    input_atom_array_path: str = "",
+    motif_fixed_positions: Optional[torch.Tensor] = None,
+    motif_fixed_mask: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """Implements Algorithm 18 in AF3.
     It performances denoising steps from time 0 to time T.
@@ -170,9 +172,39 @@ def sample_diffusion(
     batch_shape = s_inputs.shape[:-2]
     device = s_inputs.device
     dtype = s_inputs.dtype
+    use_motif_projection = motif_fixed_positions is not None and motif_fixed_mask is not None
+    if use_motif_projection:
+        motif_fixed_positions = motif_fixed_positions.to(device=device, dtype=dtype)
+        motif_fixed_mask = motif_fixed_mask.to(device=device, dtype=torch.bool)
+        if motif_fixed_mask.shape != input_feature_dict["atom_to_token_idx"].shape:
+            raise ValueError(
+                "Motif projection mask does not match Protenix atom layout: "
+                f"mask={tuple(motif_fixed_mask.shape)}, "
+                f"expected={tuple(input_feature_dict['atom_to_token_idx'].shape)}"
+            )
+        if motif_fixed_positions.shape != motif_fixed_mask.shape + (3,):
+            raise ValueError(
+                "Motif projection positions do not match Protenix atom layout: "
+                f"positions={tuple(motif_fixed_positions.shape)}, "
+                f"expected={tuple(motif_fixed_mask.shape) + (3,)}"
+            )
+
+    def apply_motif_projection(positions: torch.Tensor) -> torch.Tensor:
+        if not use_motif_projection:
+            return positions
+        return torch.where(
+            motif_fixed_mask[..., None], motif_fixed_positions, positions
+        )
 
     total_schedule_steps = len(noise_schedule) - 1
     num_denoise_iterations = diffusion_steps if diffusion_steps > 0 else len(noise_schedule) - 1
+    if diffusion_steps < 0:
+        raise ValueError(f"diffusion_steps must be non-negative, got {diffusion_steps}.")
+    if num_denoise_iterations > total_schedule_steps:
+        raise ValueError(
+            "diffusion_steps cannot exceed the noise schedule length: "
+            f"got {num_denoise_iterations}, max {total_schedule_steps}."
+        )
     print(f"Actual number of denoising iterations: {num_denoise_iterations}")
 
     def _chunk_sample_diffusion(chunk_n_sample, inplace_safe):
@@ -186,6 +218,14 @@ def sample_diffusion(
         end_idx = total_schedule_steps # For c_tau_last
         if input_atom_array_path:
             origin_positions = torch.load(input_atom_array_path, map_location=device)
+            if use_motif_projection:
+                motif_weight = motif_fixed_mask.to(
+                    device=origin_positions.device, dtype=origin_positions.dtype
+                )
+                motif_center = (
+                    origin_positions * motif_weight[..., None]
+                ).sum(dim=-2, keepdim=True) / motif_weight.sum().clamp_min(1)
+                origin_positions = origin_positions - motif_center
             origin_positions = origin_positions.unsqueeze(0).repeat(chunk_n_sample, 1, 1)
             
             if origin_positions.shape != x_l.shape:
@@ -226,11 +266,13 @@ def sample_diffusion(
             #print(f"Denoising step {k+1}/{num_denoise_iterations} (c_tau_last={c_tau_last:.4f}, c_tau={c_tau:.4f})")
             
             # [..., N_sample, N_atom, 3]
-            x_l = (
-                centre_random_augmentation(x_input_coords=x_l, N_sample=1)
-                .squeeze(dim=-3)
-                .to(dtype)
-            )
+            if not use_motif_projection:
+                x_l = (
+                    centre_random_augmentation(x_input_coords=x_l, N_sample=1)
+                    .squeeze(dim=-3)
+                    .to(dtype)
+                )
+            x_l = apply_motif_projection(x_l)
 
             # Denoise with a predictor-corrector sampler
             # 1. Add noise to move x_{c_tau_last} to x_{t_hat}
@@ -238,9 +280,9 @@ def sample_diffusion(
             t_hat = c_tau_last * (gamma + 1)
 
             delta_noise_level = torch.sqrt(t_hat**2 - c_tau_last**2)
-            x_noisy = x_l + noise_scale_lambda * delta_noise_level * torch.randn(
+            x_noisy = apply_motif_projection(x_l + noise_scale_lambda * delta_noise_level * torch.randn(
                 size=x_l.shape, device=device, dtype=dtype
-            )
+            ))
 
             # 2. Denoise from x_{t_hat} to x_{c_tau}
             # Euler step only
@@ -265,7 +307,9 @@ def sample_diffusion(
                 ..., None, None
             ]  # Line 9 of AF3 uses 'x_l_hat' instead, which we believe  is a typo.
             dt = c_tau - t_hat
-            x_l = x_noisy + step_scale_eta * dt[..., None, None] * delta
+            x_l = apply_motif_projection(
+                x_noisy + step_scale_eta * dt[..., None, None] * delta
+            )
 
         return x_l
 

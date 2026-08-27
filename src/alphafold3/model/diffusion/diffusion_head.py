@@ -313,6 +313,8 @@ def center_and_scale_reference(
     mask: jnp.ndarray,
     noise_level: float,
     key: jax.Array,
+    center: bool = True,
+    center_mask: jnp.ndarray | None = None,
 ) -> jnp.ndarray:
     """Center the reference structure and add noise matching the diffusion schedule.
     
@@ -325,18 +327,16 @@ def center_and_scale_reference(
     Returns:
         Centered and appropriately noised reference positions
     """
-    # Calculate center of mass for valid atoms
-    center_of_mass = jnp.sum(
-        ref_positions * mask[..., None],
-        axis=(0, 1)
-    ) / jnp.sum(mask)
-    
-    # Center the structure
-    centered_pos = ref_positions - center_of_mass
+    if center:
+      center_mask = mask if center_mask is None else center_mask
+      center_of_mass = jnp.sum(
+          ref_positions * center_mask[..., None], axis=(0, 1)
+      ) / jnp.maximum(jnp.sum(center_mask), 1)
+      ref_positions = ref_positions - center_of_mass
     
     # Scale the positions to match noise level
     noise = jax.random.normal(key, shape=ref_positions.shape)
-    noised_pos = centered_pos + noise_level * noise * mask[..., None]
+    noised_pos = ref_positions + noise_level * noise * mask[..., None]
     
     return noised_pos
   
@@ -366,25 +366,46 @@ def sample(
   """
 
   mask = batch.predicted_structure_info.atom_mask
+  motif_fixed_positions = batch.motif_fixed_positions
+  motif_fixed_mask = batch.motif_fixed_mask
+  use_motif_projection = motif_fixed_positions is not None and motif_fixed_mask is not None
+  if use_motif_projection:
+    if motif_fixed_mask.shape != mask.shape or motif_fixed_positions.shape != mask.shape + (3,):
+      raise ValueError(
+          'Motif projection arrays do not match AF3 dense atom layout: '
+          f'mask={motif_fixed_mask.shape}, positions={motif_fixed_positions.shape}, '
+          f'expected mask={mask.shape}, positions={mask.shape + (3,)}'
+      )
+
+  def apply_motif_projection(positions):
+    if not use_motif_projection:
+      return positions
+    return jnp.where(
+        motif_fixed_mask[..., None], motif_fixed_positions, positions
+    )
 
   def apply_denoising_step(carry, noise_level):
     key, positions, noise_level_prev = carry
     key, key_noise, key_aug = jax.random.split(key, 3)
-    positions = random_augmentation(
-        rng_key=key_aug, positions=positions, mask=mask
-    )
+    if not use_motif_projection:
+      positions = random_augmentation(
+          rng_key=key_aug, positions=positions, mask=mask
+      )
+    positions = apply_motif_projection(positions)
     
     gamma = config.gamma_0 * (noise_level > config.gamma_min)
     t_hat = noise_level_prev * (1 + gamma)
 
     noise_scale = config.noise_scale * jnp.sqrt(t_hat**2 - noise_level_prev**2)
     noise = noise_scale * jax.random.normal(key_noise, positions.shape)
-    positions_noisy = positions + noise
+    positions_noisy = apply_motif_projection(positions + noise)
     positions_denoised = denoising_step(positions_noisy, t_hat)
     grad = (positions_noisy - positions_denoised) / t_hat
 
     d_t = noise_level - t_hat
-    positions_out = positions_noisy + config.step_scale * d_t * grad
+    positions_out = apply_motif_projection(
+        positions_noisy + config.step_scale * d_t * grad
+    )
 
     return (key, positions_out, noise_level), positions_out
 
@@ -409,11 +430,13 @@ def sample(
     #print(f"ref_time_evaluation {config.steps-config.ref_time_steps} - {config.steps} steps")
     start_noise_level = noise_levels[config.steps-config.ref_time_steps]
     ref_positions = center_and_scale_reference(
-            batch.ref_pdb,
-            mask,
-            start_noise_level,
-            key
-        )
+        batch.ref_pdb,
+        mask,
+        start_noise_level,
+        key,
+        center=True,
+        center_mask=motif_fixed_mask if use_motif_projection else None,
+    )
     #ref_positions = jnp.tile(ref_positions, (num_samples_ref, 1, 1, 1))
     #init = (
     #  jax.random.split(key, num_samples_ref),
@@ -423,7 +446,9 @@ def sample(
     #result_ref, _ = hk.scan(apply_denoising_step, init, noise_levels[config.steps-config.ref_time_steps:], unroll=4)
     #_, positions_ref, _ = result_ref
     # normal_evaluation
-    positions_ref= jnp.tile(ref_positions, (num_samples_ref, 1, 1, 1))
+    positions_ref = jnp.tile(
+        apply_motif_projection(ref_positions), (num_samples_ref, 1, 1, 1)
+    )
     print("NO ref_guided diffusion")
     key, noise_key = jax.random.split(key)
     positions = jax.random.normal(noise_key, (num_samples,) + mask.shape + (3,))
@@ -440,11 +465,13 @@ def sample(
     print(f"ref_guided diffusion {config.steps-config.ref_time_steps} - {config.steps} steps")
     start_noise_level = noise_levels[config.steps-config.ref_time_steps]
     ref_positions = center_and_scale_reference(
-            batch.ref_pdb,
-            mask,
-            start_noise_level,
-            key
-        )
+        batch.ref_pdb,
+        mask,
+        start_noise_level,
+        key,
+        center=True,
+        center_mask=motif_fixed_mask if use_motif_projection else None,
+    )
     ref_positions = jnp.tile(ref_positions, (num_samples, 1, 1, 1))
     init = (
       jax.random.split(key, num_samples),

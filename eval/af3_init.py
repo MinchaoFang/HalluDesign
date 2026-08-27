@@ -3,11 +3,14 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import argparse
 import pickle
+import json
 # Assuming af3_model is in your Python path or the same directory
 from af3_model import AF3DesignerPack
+from motif_constraints import inject_af3_motif_template, load_motif_spec
 
 def process_json_folder(input_json_folder, output_base_dir, dump_result,
-                        ref_pdb_path=None, ref_time_steps=0, cyclic=0, num_samples=8):
+                        ref_pdb_path=None, ref_time_steps=0, cyclic=0, num_samples=8,
+                        motif_spec_path=""):
     """
     Processes all JSON files in a given input folder using AF3DesignerPack.
 
@@ -25,6 +28,7 @@ def process_json_folder(input_json_folder, output_base_dir, dump_result,
     print(f"Initializing AF3DesignerPack with JAX compilation directory: {jax_compilation_dir}")
     model_af3 = AF3DesignerPack(jax_compilation_dir=jax_compilation_dir)
     print("AF3DesignerPack initialized.")
+    motif_spec = load_motif_spec(motif_spec_path) if motif_spec_path else None
 
     # Iterate through all files in the input JSON folder
     for filename in input_json_folder:
@@ -33,7 +37,7 @@ def process_json_folder(input_json_folder, output_base_dir, dump_result,
             
             # Create a unique output directory for each JSON file
             # The output directory name will be based on the JSON filename (without extension)
-            base_filename = os.path.splitext(filename)[0]
+            base_filename = os.path.splitext(os.path.basename(filename))[0]
             current_out_dir = os.path.join(output_base_dir, base_filename)
             
             # Ensure the output directory exists
@@ -45,14 +49,33 @@ def process_json_folder(input_json_folder, output_base_dir, dump_result,
             
 
             try:
+                inference_json_path = json_path
+                if motif_spec is not None:
+                    # Keep the caller's JSON unchanged. The standalone entry
+                    # point must match the in-process evaluation path.
+                    with open(json_path, "r", encoding="utf-8") as handle:
+                        input_json = json.load(handle)
+                    inject_af3_motif_template(
+                        input_json, motif_spec, motif_spec.uses("template")
+                    )
+                    inference_json_path = os.path.join(
+                        current_out_dir, f"{base_filename}_motif_input.json"
+                    )
+                    with open(inference_json_path, "w", encoding="utf-8") as handle:
+                        json.dump(input_json, handle, indent=2)
+
                 # Call the single_file_process method
                 model_inference = model_af3.single_file_process(
-                    json_path=json_path,
+                    json_path=inference_json_path,
                     out_dir=current_out_dir,
                     ref_pdb_path=ref_pdb_path,
                     ref_time_steps=ref_time_steps,
                     cyclic=cyclic,
-                    num_samples=num_samples
+                    num_samples=num_samples,
+                    motif_spec=(
+                        motif_spec if motif_spec is not None
+                        and motif_spec.uses("af3_projection") else None
+                    ),
                 )
                 if dump_result:
                     with open(dump_result, "wb") as f:
@@ -120,6 +143,8 @@ if __name__ == "__main__":
         default=8,
         help="Number of samples to generate for each JSON. Defaults to 8."
     )
+    parser.add_argument("--motif_spec", type=str, default="",
+                        help="Optional motif JSON used for AF3 hard projection.")
 
     args = parser.parse_args()
     args.input_json_folder = [args.input_json]
@@ -131,5 +156,6 @@ if __name__ == "__main__":
         ref_pdb_path=args.ref_pdb_path,
         ref_time_steps=args.ref_time_steps,
         cyclic=args.cyclic,
-        num_samples=args.num_samples
+        num_samples=args.num_samples,
+        motif_spec_path=args.motif_spec,
     )

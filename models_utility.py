@@ -10,10 +10,11 @@ import json
 import re
 import pickle
 from local_scripts.input_pkl_preprocess import process_single_file
+from motif_constraints import MotifSpec, inject_af3_motif_template, inject_protenix_motif_sequence
 
 
 def _build_af3_random_init_json(template_path, json_path, tag, random_init_sequences,
-                                chain_types, sm, ccd, dna, rna):
+                                chain_types, sm, ccd, dna, rna, motif_spec=None):
     with open(template_path, 'r') as f:
         input_json = copy.deepcopy(json.load(f))
 
@@ -44,6 +45,8 @@ def _build_af3_random_init_json(template_path, json_path, tag, random_init_seque
             rna_count += 1
         count += 1
 
+    if motif_spec is not None:
+        inject_af3_motif_template(input_json, motif_spec, motif_spec.uses("template"))
     input_json["modelSeeds"] = get_random_seeds(1)
     with open(json_path, 'w') as f:
         json.dump(input_json, f, indent=2)
@@ -51,7 +54,7 @@ def _build_af3_random_init_json(template_path, json_path, tag, random_init_seque
 
 def _build_protenix_random_init_json(template_path, json_path, tag,
                                      random_init_sequences, chain_types,
-                                     sm, dna, rna):
+                                     sm, dna, rna, motif_spec=None):
     with open(template_path, 'r') as f:
         input_json = copy.deepcopy(json.load(f))
 
@@ -80,18 +83,21 @@ def _build_protenix_random_init_json(template_path, json_path, tag,
             rna_count += 1
         count += 1
 
+    if motif_spec is not None:
+        inject_protenix_motif_sequence(input_json, motif_spec)
     with open(json_path, 'w') as f:
         json.dump(input_json, f, indent=2)
 
 
 def _make_af3_random_init_pdb(AF3Designer_model, target_dir, template_path,
                               file_tag, cycle, random_init_sequences,
-                              chain_types, sm, ccd, dna, rna, cyclic):
+                              chain_types, sm, ccd, dna, rna, cyclic,
+                              motif_spec=None):
     init_tag = f"{file_tag}_recycle_{cycle+1}_init"
     json_path = os.path.join(target_dir, f"{init_tag}.json")
     _build_af3_random_init_json(
         template_path, json_path, init_tag, random_init_sequences,
-        chain_types, sm, ccd, dna, rna
+        chain_types, sm, ccd, dna, rna, motif_spec
     )
     print(f"AF3 random-init pure prediction: {json_path}")
     results = AF3Designer_model.single_file_process(
@@ -101,6 +107,7 @@ def _make_af3_random_init_pdb(AF3Designer_model, target_dir, template_path,
         ref_time_steps=200,
         cyclic=cyclic,
         num_samples=5,
+        motif_spec=motif_spec if motif_spec is not None and motif_spec.uses("af3_projection") else None,
     )
     cif_path = os.path.join(target_dir, init_tag, f"{init_tag}_model.cif")
     pdb_path = os.path.join(target_dir, f"{init_tag}.pdb")
@@ -111,18 +118,19 @@ def _make_af3_random_init_pdb(AF3Designer_model, target_dir, template_path,
 
 def _make_protenix_random_init_pdb(Designer_model, target_dir, template_path,
                                    file_tag, cycle, random_init_sequences,
-                                   chain_types, sm, dna, rna):
+                                   chain_types, sm, dna, rna, motif_spec=None):
     init_tag = f"{file_tag}_recycle_{cycle+1}_init"
     json_path = os.path.join(target_dir, f"{init_tag}.json")
     _build_protenix_random_init_json(
         template_path, json_path, init_tag, random_init_sequences,
-        chain_types, sm, dna, rna
+        chain_types, sm, dna, rna, motif_spec
     )
     print(f"Protenix random-init pure prediction: {json_path}")
     results = Designer_model.predict(
         input_json_path=json_path,
         dump_dir=target_dir,
         seed=123,
+        motif_spec=motif_spec if motif_spec is not None and motif_spec.uses("protenix_projection") else None,
     )
     cif_path = os.path.join(
         target_dir, init_tag, "seed_123", "predictions",
@@ -166,7 +174,8 @@ def af3_op_af3_eval(pdb_file: str,
                       enzyme_design,
                       run_af3: bool = True,
                       random_init_sequences=None,
-                      random_init_file_tag=None) -> Dict:
+                      random_init_file_tag=None,
+                      motif_spec: MotifSpec | None = None) -> Dict:
     """single pdb single cycle"""
     
     try:
@@ -180,7 +189,8 @@ def af3_op_af3_eval(pdb_file: str,
                 raise ValueError("No-PDB random init requires cycle 0 random_init_sequences and random_init_file_tag.")
             source_file = _make_af3_random_init_pdb(
                 AF3Designer_model, target_dir, template_path, random_init_file_tag,
-                cycle, random_init_sequences, chain_types, sm, ccd, dna, rna, cyclic
+                cycle, random_init_sequences, chain_types, sm, ccd, dna, rna,
+                cyclic, motif_spec
             )
             pdb_file = random_init_file_tag
         else:
@@ -218,6 +228,11 @@ def af3_op_af3_eval(pdb_file: str,
             for chain, residues in filtered_info.items()
             for res in residues
         ]
+        if motif_spec is not None:
+            fixed_residues_for_MPNN = sorted(
+                set(fixed_residues_for_MPNN) | set(motif_spec.target_residue_strings())
+            )
+            metrics["motif_residue_count"] = len(motif_spec.target_residues)
         # for symmetry chains and res design
         if symmetry_chains:
             symmetry_residues = generate_cross_chain_symmetry(protein_info, symmetry_chains)
@@ -276,7 +291,8 @@ def af3_op_af3_eval(pdb_file: str,
                 fixed_residues_for_MPNN,
                 cyclic,
                 replace_MSA,
-                metrics
+                metrics,
+                motif_spec=motif_spec,
             )
         else:
             print("no af3 prediction")
@@ -333,6 +349,8 @@ def af3_op_af3_eval(pdb_file: str,
         if enzyme_design:
             count_tuple = [2,1,1,0,0]
         input_json["modelSeeds"] = get_random_seeds(1)
+        if motif_spec is not None:
+            inject_af3_motif_template(input_json, motif_spec, motif_spec.uses("template"))
         # use the previous MSA but replace the query sequence
         if replace_MSA:
             for _N in range(protein_count):
@@ -394,7 +412,8 @@ def af3_op_af3_eval(pdb_file: str,
                                             ref_pdb_path=None,
                                             ref_time_steps =200,
                                             cyclic=cyclic,
-                                            num_samples=5)
+                                            num_samples=5,
+                                            motif_spec=motif_spec if motif_spec is not None and motif_spec.uses("af3_projection") else None)
         elif cycle == 0 and random_init and random_init_sequences is None:
             print("pure prediction")
             results_op= AF3Designer_model.single_file_process(json_path=json_path,
@@ -402,14 +421,16 @@ def af3_op_af3_eval(pdb_file: str,
                                             ref_pdb_path=None,
                                             ref_time_steps =200,
                                             cyclic=cyclic,
-                                            num_samples=5)
+                                            num_samples=5,
+                                            motif_spec=motif_spec if motif_spec is not None and motif_spec.uses("af3_projection") else None)
         else:
             results_op= AF3Designer_model.single_file_process(json_path=json_path,
                                               out_dir=target_dir,
                                             ref_pdb_path=pkl_path,
                                             ref_time_steps =ref_time_steps,
                                             cyclic=cyclic,
-                                            num_samples=5)
+                                            num_samples=5,
+                                            motif_spec=motif_spec if motif_spec is not None and motif_spec.uses("af3_projection") else None)
         
         if results_op:
             # get output path
@@ -477,7 +498,8 @@ try:
                       random_init,
                       run_af3: bool = True,
                       random_init_sequences=None,
-                      random_init_file_tag=None) -> Dict:
+                      random_init_file_tag=None,
+                      motif_spec: MotifSpec | None = None) -> Dict:
         """Process a single PDB file in one iteration"""
 
         try:
@@ -491,7 +513,7 @@ try:
                     raise ValueError("No-PDB random init requires cycle 0 random_init_sequences and random_init_file_tag.")
                 source_file = _make_protenix_random_init_pdb(
                     Designer_model, target_dir, template_path, random_init_file_tag,
-                    cycle, random_init_sequences, chain_types, sm, dna, rna
+                    cycle, random_init_sequences, chain_types, sm, dna, rna, motif_spec
                 )
                 pdb_file = random_init_file_tag
             else:
@@ -529,6 +551,11 @@ try:
                 for chain, residues in filtered_info.items()
                 for res in residues
             ]
+            if motif_spec is not None:
+                fixed_residues_for_MPNN = sorted(
+                    set(fixed_residues_for_MPNN) | set(motif_spec.target_residue_strings())
+                )
+                metrics["motif_residue_count"] = len(motif_spec.target_residues)
             # for symmetry chains and res design
             if symmetry_chains:
                 symmetry_residues = generate_cross_chain_symmetry(protein_info, symmetry_chains)
@@ -578,7 +605,8 @@ try:
                     fixed_residues_for_MPNN=fixed_residues_for_MPNN,
                     cyclic=cyclic,
                     metrics=metrics,
-                    random_init=random_init
+                    random_init=random_init,
+                    motif_spec=motif_spec,
                 )
 
             else:
@@ -632,6 +660,8 @@ try:
                     count += 1
                 count_tuple = [count,protein_count,sm_count,rna_count,dna_count]
 
+                if motif_spec is not None:
+                    inject_protenix_motif_sequence(input_json, motif_spec)
                 with open(json_path, 'w') as f:
                     json.dump(input_json, f, indent=2)
 
@@ -646,14 +676,16 @@ try:
                     results_op=Designer_model.predict(
                     input_json_path=json_path,
                     dump_dir=target_dir,
-                    seed=123
+                    seed=123,
+                    motif_spec=motif_spec if motif_spec is not None and motif_spec.uses("protenix_projection") else None,
                     )
                 elif ref_time_steps == 200:
                     print("pure prediction")
                     results_op=Designer_model.predict(
                     input_json_path=json_path,
                     dump_dir=target_dir,
-                    seed=123
+                    seed=123,
+                    motif_spec=motif_spec if motif_spec is not None and motif_spec.uses("protenix_projection") else None,
                     )
                 else:
                     print(json_path, pkl_path)
@@ -662,7 +694,8 @@ try:
                     dump_dir=target_dir,
                     seed=123,
                     input_atom_array_path=pkl_path,
-                    diffusion_steps = ref_time_steps
+                    diffusion_steps = ref_time_steps,
+                    motif_spec=motif_spec if motif_spec is not None and motif_spec.uses("protenix_projection") else None,
                     )
 
                 if results_op:
@@ -726,7 +759,8 @@ try:
         enzyme_design,
         run_af3: bool = True,
         random_init_sequences=None,
-        random_init_file_tag=None) -> Dict:
+        random_init_file_tag=None,
+        motif_spec: MotifSpec | None = None) -> Dict:
         """Process a single PDB file in one iteration"""
 
         try:
@@ -740,7 +774,7 @@ try:
                     raise ValueError("No-PDB random init requires cycle 0 random_init_sequences and random_init_file_tag.")
                 source_file = _make_protenix_random_init_pdb(
                     Designer_model, target_dir, template_path, random_init_file_tag,
-                    cycle, random_init_sequences, chain_types, sm, dna, rna
+                    cycle, random_init_sequences, chain_types, sm, dna, rna, motif_spec
                 )
                 pdb_file = random_init_file_tag
             else:
@@ -778,6 +812,11 @@ try:
                 for chain, residues in filtered_info.items()
                 for res in residues
             ]
+            if motif_spec is not None:
+                fixed_residues_for_MPNN = sorted(
+                    set(fixed_residues_for_MPNN) | set(motif_spec.target_residue_strings())
+                )
+                metrics["motif_residue_count"] = len(motif_spec.target_residues)
             # for symmetry chains and res design
             if symmetry_chains:
                 symmetry_residues = generate_cross_chain_symmetry(protein_info, symmetry_chains)
@@ -830,7 +869,8 @@ try:
                     fixed_residues_for_MPNN=fixed_residues_for_MPNN,
                     cyclic=cyclic,
                     metrics=metrics,
-                    random_init=random_init
+                    random_init=random_init,
+                    motif_spec=motif_spec,
                 )
 
             else:
@@ -893,6 +933,8 @@ try:
                     count += 1
                 count_tuple = [count,protein_count,sm_count,rna_count,dna_count]
 
+                if motif_spec is not None:
+                    inject_protenix_motif_sequence(input_json, motif_spec)
                 with open(json_path, 'w') as f:
                     json.dump(input_json, f, indent=2)
 
@@ -907,14 +949,16 @@ try:
                     results_op=Designer_model.predict(
                     input_json_path=json_path,
                     dump_dir=target_dir,
-                    seed=123
+                    seed=123,
+                    motif_spec=motif_spec if motif_spec is not None and motif_spec.uses("protenix_projection") else None,
                     )
                 elif ref_time_steps == 200:
                     print("pure prediction")
                     results_op=Designer_model.predict(
                     input_json_path=json_path,
                     dump_dir=target_dir,
-                    seed=123
+                    seed=123,
+                    motif_spec=motif_spec if motif_spec is not None and motif_spec.uses("protenix_projection") else None,
                     )
                 else:
                     print(json_path, pkl_path)
@@ -923,7 +967,8 @@ try:
                     dump_dir=target_dir,
                     seed=123,
                     input_atom_array_path=pkl_path,
-                    diffusion_steps = ref_time_steps
+                    diffusion_steps = ref_time_steps,
+                    motif_spec=motif_spec if motif_spec is not None and motif_spec.uses("protenix_projection") else None,
                     )
 
                 if results_op:
@@ -996,6 +1041,9 @@ try:
                 count_tuple = [count,protein_count,sm_count,rna_count,dna_count]
                 input_json["modelSeeds"] = get_random_seeds(1)
 
+                if motif_spec is not None:
+                    inject_af3_motif_template(input_json, motif_spec, motif_spec.uses("template"))
+
                 with open(json_path, 'w') as f:
                     json.dump(input_json, f, indent=2)
                 
@@ -1026,7 +1074,8 @@ try:
                                                     None, 
                                                     dump_result, 
                                                     ref_time_steps, 5,
-                                                    cyclic, )
+                                                    cyclic,
+                                                    motif_spec.path if motif_spec is not None and motif_spec.uses("af3_projection") else "")
                 elif cycle == 0 and random_init and random_init_sequences is None:
                     print("pure prediction")
                     run_AF3_evaluation_with_ref_eval(target_dir,
@@ -1034,14 +1083,16 @@ try:
                                                     None, 
                                                     dump_result, 
                                                     ref_time_steps, 5,
-                                                    cyclic, )
+                                                    cyclic,
+                                                    motif_spec.path if motif_spec is not None and motif_spec.uses("af3_projection") else "")
                 else:
                     run_AF3_evaluation_with_ref_eval(target_dir,
                                                     json_path,
                                                     pkl_path, 
                                                     dump_result, 
                                                     ref_time_steps, 5,
-                                                    cyclic, )
+                                                    cyclic,
+                                                    motif_spec.path if motif_spec is not None and motif_spec.uses("af3_projection") else "")
                 
                 with open(dump_result, "rb") as f:
                     results_op = pickle.load(f)
@@ -1084,7 +1135,8 @@ from pathlib import Path
 import os
 
 def run_AF3_evaluation_with_ref_eval(output_dir, json_path, pkl_path, dump_result,
-                                     ref_time_steps, num_samples, cyclic=1):
+                                     ref_time_steps, num_samples, cyclic=1,
+                                     motif_spec_path=""):
     try:
 
         af3_script = Path("eval") / "af3_init.py"
@@ -1103,6 +1155,8 @@ def run_AF3_evaluation_with_ref_eval(output_dir, json_path, pkl_path, dump_resul
             f"--ref_pdb_path={pkl_path}",
             f"--dump_result={dump_result}"
         ]
+        if motif_spec_path:
+            command.append(f"--motif_spec={motif_spec_path}")
 
         print("Running command:", " ".join(command))
 

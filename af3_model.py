@@ -260,8 +260,18 @@ class ModelRunner:
     rng_key: jnp.ndarray, 
     ref_pdb_path: os.PathLike[str] | None,  # 
     ref_pkl_dump_path: os.PathLike[str] | None,
-) -> base_model.ModelResult:
+    motif_spec=None,
+  ) -> base_model.ModelResult:
     """Computes a forward pass of the model on a featurised example."""
+    if motif_spec is not None:
+      from motif_constraints import build_af3_dense_projection
+      motif_positions, motif_mask = build_af3_dense_projection(
+          motif_spec, featurised_example['token_atoms_layout'].item()
+      )
+      featurised_example = dict(featurised_example)
+      featurised_example['motif_fixed_positions'] = motif_positions
+      featurised_example['motif_fixed_mask'] = motif_mask
+
     featurised_example = jax.device_put(
         jax.tree_util.tree_map(
             jnp.asarray, utils.remove_invalidly_typed_feats(featurised_example)
@@ -339,6 +349,7 @@ def predict_structure(
     ref_pdb_path: os.PathLike[str] | str,
     ref_pkl_dump_path: os.PathLike[str] | str,
     buckets: Sequence[int] | None = None,
+    motif_spec=None,
 ) -> Sequence[ResultsForSeed]:
   """Runs the full inference pipeline to predict structures for each seed."""
 
@@ -358,7 +369,9 @@ def predict_structure(
     print(f'Running model inference for seed {seed}...')
     inference_start_time = time.time()
     rng_key = jax.random.PRNGKey(seed)
-    result = model_runner.run_inference(example, rng_key,ref_pdb_path,ref_pkl_dump_path)
+    result = model_runner.run_inference(
+        example, rng_key, ref_pdb_path, ref_pkl_dump_path, motif_spec
+    )
     print(
         f'Running model inference for seed {seed} took '
         f' {time.time() - inference_start_time:.2f} seconds.'
@@ -478,6 +491,7 @@ def process_fold_input(
     ref_pdb_path: os.PathLike[str] | None,
     ref_pkl_dump_path: os.PathLike[str] | None,
     buckets: Sequence[int] | None = None,
+    motif_spec=None,
 ) -> folding_input.Input | Sequence[ResultsForSeed]:
   """Runs data pipeline and/or inference on a single fold input.
 
@@ -538,6 +552,7 @@ def process_fold_input(
         model_runner=model_runner,
         ref_pdb_path=ref_pdb_path,
         ref_pkl_dump_path=ref_pkl_dump_path,
+        motif_spec=motif_spec,
         buckets=buckets)
     print(
         f'Writing outputs for {fold_input.name} for seed(s)'
@@ -610,7 +625,8 @@ class AF3DesignerPack:
                             num_samples=5,
                             ref_time_evaluation = 0,
                             cyclic = None,
-                            ref_pkl_dump_path=None):
+                            ref_pkl_dump_path=None,
+                            motif_spec=None):
         """"""
 
         fold_inputs = folding_input.load_fold_inputs_from_path(
@@ -638,6 +654,7 @@ class AF3DesignerPack:
                 output_dir=os.path.join(out_dir, fold_input.sanitised_name()),
                 ref_pdb_path=ref_pdb_path if ref_pdb_path else None,
                 ref_pkl_dump_path=ref_pkl_dump_path if ref_pkl_dump_path else None,
+                motif_spec=motif_spec,
                 buckets=self._BUCKETS if self._BUCKETS else []
             )
         return inference_output

@@ -312,7 +312,9 @@ class Protenix(nn.Module):
         N_model_seed: int = 1,
         symmetric_permutation: SymmetricPermutation = None,
         diffusion_steps: int = 0,
-        input_atom_array_path: str = ""
+        input_atom_array_path: str = "",
+        motif_fixed_positions: Optional[torch.Tensor] = None,
+        motif_fixed_mask: Optional[torch.Tensor] = None,
     ) -> tuple[dict[str, torch.Tensor], dict[str, Any], dict[str, Any]]:
         """
         Main inference loop (multiple model seeds) for the Alphafold3 model.
@@ -343,7 +345,9 @@ class Protenix(nn.Module):
                 chunk_size=chunk_size,
                 symmetric_permutation=symmetric_permutation,
                 diffusion_steps= diffusion_steps,
-                input_atom_array_path= input_atom_array_path
+                input_atom_array_path= input_atom_array_path,
+                motif_fixed_positions=motif_fixed_positions,
+                motif_fixed_mask=motif_fixed_mask,
             )
             pred_dicts.append(pred_dict)
             log_dicts.append(log_dict)
@@ -380,7 +384,9 @@ class Protenix(nn.Module):
         chunk_size: Optional[int] = 4,
         symmetric_permutation: SymmetricPermutation = None,
         diffusion_steps: int = 0,
-        input_atom_array_path: str = ""
+        input_atom_array_path: str = "",
+        motif_fixed_positions: Optional[torch.Tensor] = None,
+        motif_fixed_mask: Optional[torch.Tensor] = None,
     ) -> tuple[dict[str, torch.Tensor], dict[str, Any], dict[str, Any]]:
         """
         Main inference loop (single model seed) for the Alphafold3 model.
@@ -441,7 +447,9 @@ class Protenix(nn.Module):
             noise_schedule=noise_schedule,
             inplace_safe=inplace_safe,
             diffusion_steps = diffusion_steps,
-            input_atom_array_path = input_atom_array_path
+            input_atom_array_path = input_atom_array_path,
+            motif_fixed_positions=motif_fixed_positions,
+            motif_fixed_mask=motif_fixed_mask,
         )
         print(pred_dict["coordinate"].shape)
         step_diffusion = time.time()
@@ -585,6 +593,8 @@ class Protenix(nn.Module):
                     device=s_inputs.device,
                     dtype=s_inputs.dtype,
                 ),
+                motif_fixed_positions=motif_fixed_positions,
+                motif_fixed_mask=motif_fixed_mask,
             )
             coordinate_mini.detach_()
             pred_dict["coordinate_mini"] = coordinate_mini
@@ -674,7 +684,9 @@ class Protenix(nn.Module):
         current_step: Optional[int] = None,
         symmetric_permutation: SymmetricPermutation = None,
         diffusion_steps: int = 0,
-        input_atom_array_path: str = ""
+        input_atom_array_path: str = "",
+        motif_fixed_positions: Optional[torch.Tensor] = None,
+        motif_fixed_mask: Optional[torch.Tensor] = None,
     ) -> tuple[dict[str, torch.Tensor], dict[str, Any], dict[str, Any]]:
         """
         Forward pass of the Alphafold3 model.
@@ -723,7 +735,9 @@ class Protenix(nn.Module):
                 N_model_seed=self.N_model_seed,
                 symmetric_permutation=None,
                 diffusion_steps=diffusion_steps,
-                input_atom_array_path=input_atom_array_path
+                input_atom_array_path=input_atom_array_path,
+                motif_fixed_positions=motif_fixed_positions,
+                motif_fixed_mask=motif_fixed_mask,
             )
             log_dict.update({"time": time_tracker})
         elif mode == "eval":

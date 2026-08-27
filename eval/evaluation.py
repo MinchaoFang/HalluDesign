@@ -16,6 +16,7 @@ import pandas as pd
 import torch
 import numpy as np
 import pickle
+from motif_constraints import inject_af3_motif_template, inject_protenix_motif_sequence
 try:
     import biotite.structure.io as strucio
     from biotite.structure import AtomArray
@@ -163,7 +164,8 @@ def self_consistency_protenix(scaffold_path,
                         fixed_residues_for_MPNN,
                         cyclic,
                         metrics,
-                        random_init= False):
+                        random_init=False,
+                        motif_spec=None):
     metrics_to_tile = []
     seq_count = 0
     for metric in metrics:
@@ -203,6 +205,8 @@ def self_consistency_protenix(scaffold_path,
                 rna_count +=1
             count += 1
         # Write the new JSON file
+        if motif_spec is not None:
+            inject_protenix_motif_sequence(input_json, motif_spec)
         with open(json_path, 'w') as f:
             json.dump(input_json, f, indent=2)
             
@@ -211,7 +215,11 @@ def self_consistency_protenix(scaffold_path,
         results_eval=AF3Designer_model.predict(
             input_json_path=json_path,
             dump_dir=output_dir,
-            seed=123
+            seed=123,
+            motif_spec=(
+                motif_spec if motif_spec is not None
+                and motif_spec.uses("protenix_projection") else None
+            ),
         )
 
         max_ranking_score = 0
@@ -342,7 +350,8 @@ def self_consistency_af3(scaffold_path,
                         fixed_residues_for_MPNN,
                         cyclic,
                         replace_MSA,
-                        metrics):
+                        metrics,
+                        motif_spec=None):
     metrics_to_tile = []
     seq_count = 0
     for metric in metrics:
@@ -387,6 +396,9 @@ def self_consistency_af3(scaffold_path,
                 count += 1
 
         # Write the new JSON file
+        if motif_spec is not None:
+            inject_af3_motif_template(input_json, motif_spec, motif_spec.uses("template"))
+
         if replace_MSA:
             for _N in range(protein_count):
                 try:
@@ -418,14 +430,19 @@ def self_consistency_af3(scaffold_path,
                 except:
                     print(f"chain{_N} no MSA")
 
-
         with open(json_path, 'w') as f:
             json.dump(input_json, f, indent=2)
             
         base_name = os.path.basename(scaffold_path)
        
         print("normal AF3 batch diffusion")
-        results_eval=AF3Designer_model.single_file_process(json_path,output_dir,cyclic =cyclic_prediction)
+        results_eval=AF3Designer_model.single_file_process(
+            json_path, output_dir, cyclic=cyclic_prediction,
+            motif_spec=(
+                motif_spec if motif_spec is not None
+                and motif_spec.uses("af3_projection") else None
+            ),
+        )
         #print(results_eval)
         #import pickle
 

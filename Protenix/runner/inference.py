@@ -131,7 +131,8 @@ class InferenceRunner(object):
     # Adapted from runner.train.Trainer.evaluate
     @torch.no_grad()
     def predict(self, data: Mapping[str, Mapping[str, Any]],
-                 diffusion_steps=0, input_atom_array_path="") -> dict[str, torch.Tensor]:
+                 diffusion_steps=0, input_atom_array_path="",
+                 motif_fixed_positions=None, motif_fixed_mask=None) -> dict[str, torch.Tensor]:
         eval_precision = {
             "fp32": torch.float32,
             "bf16": torch.bfloat16,
@@ -152,7 +153,9 @@ class InferenceRunner(object):
                 label_dict=None,
                 mode="inference",
                 diffusion_steps=diffusion_steps,
-                input_atom_array_path=input_atom_array_path
+                input_atom_array_path=input_atom_array_path,
+                motif_fixed_positions=motif_fixed_positions,
+                motif_fixed_mask=motif_fixed_mask,
             )
 
         return prediction
@@ -217,7 +220,8 @@ def update_inference_configs(configs: Any, N_token: int):
     return configs
 
 
-def infer_predict(runner: InferenceRunner, configs: Any, diffusion_steps=0, input_atom_array_path="") -> None:
+def infer_predict(runner: InferenceRunner, configs: Any, diffusion_steps=0,
+                  input_atom_array_path="", motif_spec=None) -> None:
     # Data
     logger.info(f"Loading data from\n{configs.input_json_path}")
     try:
@@ -252,7 +256,17 @@ def infer_predict(runner: InferenceRunner, configs: Any, diffusion_steps=0, inpu
                 #)
                 new_configs = update_inference_configs(configs, data["N_token"].item())
                 runner.update_model_configs(new_configs)
-                prediction = runner.predict(data, diffusion_steps, input_atom_array_path)
+                motif_positions = None
+                motif_mask = None
+                if motif_spec is not None:
+                    from motif_constraints import build_protenix_projection
+                    positions, mask = build_protenix_projection(motif_spec, atom_array)
+                    motif_positions = torch.as_tensor(positions, device=runner.device)
+                    motif_mask = torch.as_tensor(mask, device=runner.device)
+                prediction = runner.predict(
+                    data, diffusion_steps, input_atom_array_path,
+                    motif_positions, motif_mask,
+                )
                 #torch.save(prediction,"/storage/caolongxingLab/fangminchao/software/Protenix/prediction.pkl")
                 runner.dumper.dump(
                     dataset_name="",
@@ -443,7 +457,8 @@ class ProtenixInferrer:
                 dump_dir: str, 
                 seed: int,
                 input_atom_array_path: str = "", 
-                diffusion_steps: int = 0 
+                diffusion_steps: int = 0,
+                motif_spec=None,
                 ) -> None:
         """
         Executes the prediction process with the specified input, output, and seed.
@@ -472,6 +487,9 @@ class ProtenixInferrer:
         )
 
         # Call the original infer_predict function with the updated runner and configs
-        prediction=infer_predict(self.runner, current_configs, diffusion_steps, input_atom_array_path)
+        prediction=infer_predict(
+            self.runner, current_configs, diffusion_steps, input_atom_array_path,
+            motif_spec,
+        )
 
         return prediction
