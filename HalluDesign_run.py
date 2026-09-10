@@ -120,6 +120,8 @@ def parse_arguments():
                     help="Optional override for motif_spec.scaffold_steps")
     parser.add_argument("--refine_steps", type=int, default=None,
                     help="Optional override for motif_spec.refine_steps")
+    parser.add_argument("--soft_projection_weight", type=float, default=None,
+                    help="Optional motif soft-projection weight in [0, 1]")
     return parser.parse_args()
 
 
@@ -168,6 +170,43 @@ def _template_chain_records(template_path, halludesign_model):
             for _ in range(count):
                 records.append((next(chain_labels), chain_type, sequence_index, count))
     return records
+
+
+def _validate_cross_model_templates(protenix_template_path, af3_template_path):
+    """Validate the chain contract assumed by the cross-model loop.
+
+    The cross-model implementation writes sequences by entity order and later
+    addresses PDB chains as A, B, ... .  A mismatch here would otherwise run
+    successfully while optimizing a different chain than the one evaluated by
+    Protenix.
+    """
+    protenix_records = _template_chain_records(
+        protenix_template_path, "protenix"
+    )
+    af3_records = _template_chain_records(af3_template_path, "af3")
+    protenix_signature = [record[1] for record in protenix_records]
+    af3_signature = [record[1] for record in af3_records]
+    if protenix_signature != af3_signature:
+        raise ValueError(
+            "Cross-model templates must contain the same chains in the same "
+            f"order and type; Protenix={protenix_signature}, AF3={af3_signature}."
+        )
+
+    if any(record[3] != 1 for record in protenix_records + af3_records):
+        raise ValueError(
+            "Cross-model currently requires one chain per sequence entry. "
+            "Split multi-copy/count entries into separate chains in both templates."
+        )
+
+    expected_chain_ids = list(string.ascii_uppercase[:len(protenix_records)])
+    protenix_chain_ids = [record[0] for record in protenix_records]
+    af3_chain_ids = [record[0] for record in af3_records]
+    if protenix_chain_ids != expected_chain_ids or af3_chain_ids != expected_chain_ids:
+        raise ValueError(
+            "Cross-model templates must expose chains as A, B, ... because "
+            "the existing HalluDesign PDB/sequence mapping uses those IDs; "
+            f"Protenix={protenix_chain_ids}, AF3={af3_chain_ids}."
+        )
 
 
 def _parse_random_init_chain_spec(spec, template_path, halludesign_model):
@@ -242,6 +281,7 @@ def main():
             motif_mode=args.motif_mode,
             scaffold_steps=args.scaffold_steps,
             refine_steps=args.refine_steps,
+            soft_projection_weight=args.soft_projection_weight,
         )
     else:
         motif_spec = None
@@ -261,6 +301,13 @@ def main():
 
     if args.random_init_chain_spec and (args.pdb_list or args.input_file):
         raise ValueError("Do not combine --random_init_chain_spec with --pdb_list or --input_file")
+
+    if args.HalluDesign_model == "cross_model" and not args.extra_json_path:
+        raise ValueError("--extra_json_path is required when --HalluDesign_model=cross_model")
+    if args.extra_json_path and not os.path.exists(args.extra_json_path):
+        raise FileNotFoundError(f"Extra cross-model template file {args.extra_json_path} not found!")
+    if args.HalluDesign_model == "cross_model":
+        _validate_cross_model_templates(args.template_path, args.extra_json_path)
 
     if args.num_designs < 1:
         raise ValueError("--num_designs must be at least 1")
@@ -381,7 +428,7 @@ def main():
         #sys.path.insert(0,os.path.join(current_dir,"Protenix"))
         from runner.inference import ProtenixInferrer
         os.environ["LAYERNORM_TYPE"] = "fast_layernorm"
-        os.environ["USE_DEEPSPEED_EVO_ATTENTION"] = "true"
+        os.environ.setdefault("USE_DEEPSPEED_EVO_ATTENTION", "true")
         script_dir = os.path.dirname(os.path.abspath(__file__))
         os.environ["CUTLASS_PATH"] = os.path.join(script_dir, "cutlass")
         static_configs = {

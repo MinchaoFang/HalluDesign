@@ -1,6 +1,6 @@
 import os
 from data.op_utility import read_protein_info_from_copied_file, filter_protein_info,residue_to_str,cdr_process,find_all_sequence_residues_in_pdb, random_protein_sequence
-from eval.evaluation import run_mpnn_evaluation, self_consistency_af3 ,process_confidence_metrics_af3,process_confidence_metrics_protenix,self_consistency_protenix,read_pdb_to_atom_array,extract_coordinates
+from eval.evaluation import run_mpnn_evaluation, self_consistency_af3 ,process_confidence_metrics_af3,process_confidence_metrics_protenix,self_consistency_protenix,read_pdb_to_atom_array
 import copy
 from typing import Dict, List, Tuple
 import shutil
@@ -9,8 +9,21 @@ from data.utility import *
 import json
 import re
 import pickle
+import numpy as np
+import torch
 from local_scripts.input_pkl_preprocess import process_single_file
 from motif_constraints import MotifSpec, inject_af3_motif_template, inject_protenix_motif_sequence
+
+
+def _mark_metrics_failed(metrics, status_key):
+    """Set a failure status on either a metric dict or the metric list."""
+    if isinstance(metrics, list):
+        for metric in metrics:
+            if isinstance(metric, dict):
+                metric[status_key] = "Failed"
+    elif isinstance(metrics, dict):
+        metrics[status_key] = "Failed"
+    return metrics
 
 
 def _build_af3_random_init_json(template_path, json_path, tag, random_init_sequences,
@@ -107,7 +120,10 @@ def _make_af3_random_init_pdb(AF3Designer_model, target_dir, template_path,
         ref_time_steps=200,
         cyclic=cyclic,
         num_samples=5,
-        motif_spec=motif_spec if motif_spec is not None and motif_spec.uses("af3_projection") else None,
+        motif_spec=motif_spec if motif_spec is not None and (
+            motif_spec.uses("af3_projection")
+            or motif_spec.uses("af3_soft_projection")
+        ) else None,
     )
     cif_path = os.path.join(target_dir, init_tag, f"{init_tag}_model.cif")
     pdb_path = os.path.join(target_dir, f"{init_tag}.pdb")
@@ -130,7 +146,10 @@ def _make_protenix_random_init_pdb(Designer_model, target_dir, template_path,
         input_json_path=json_path,
         dump_dir=target_dir,
         seed=123,
-        motif_spec=motif_spec if motif_spec is not None and motif_spec.uses("protenix_projection") else None,
+        motif_spec=motif_spec if motif_spec is not None and (
+            motif_spec.uses("protenix_projection")
+            or motif_spec.uses("protenix_soft_projection")
+        ) else None,
     )
     cif_path = os.path.join(
         target_dir, init_tag, "seed_123", "predictions",
@@ -403,6 +422,15 @@ def af3_op_af3_eval(pdb_file: str,
 
         # run AF3
         pkl_path = os.path.join(target_dir, f'{os.path.splitext(copied_file)[0]}.pkl')
+        needs_reference = ref_time_steps != 200 and not (
+            cycle == 0 and random_init and random_init_sequences is None
+        )
+        if needs_reference and (
+            not result or error or not os.path.exists(pkl_path)
+        ):
+            raise RuntimeError(
+                f"AF3 reference-coordinate preprocessing failed for {copied_file}: {error}"
+            )
         clear_gpu_memory()
         print(json_path,  target_dir, pkl_path, ref_time_steps)
         if ref_time_steps == 200:
@@ -413,7 +441,11 @@ def af3_op_af3_eval(pdb_file: str,
                                             ref_time_steps =200,
                                             cyclic=cyclic,
                                             num_samples=5,
-                                            motif_spec=motif_spec if motif_spec is not None and motif_spec.uses("af3_projection") else None)
+                    motif_spec=motif_spec if motif_spec is not None and (
+                        motif_spec.uses("af3_projection")
+                        or motif_spec.uses("af3_soft_projection")
+                    ) else None,
+                                            current_structure_path=copied_file)
         elif cycle == 0 and random_init and random_init_sequences is None:
             print("pure prediction")
             results_op= AF3Designer_model.single_file_process(json_path=json_path,
@@ -422,7 +454,11 @@ def af3_op_af3_eval(pdb_file: str,
                                             ref_time_steps =200,
                                             cyclic=cyclic,
                                             num_samples=5,
-                                            motif_spec=motif_spec if motif_spec is not None and motif_spec.uses("af3_projection") else None)
+                                            motif_spec=motif_spec if motif_spec is not None and (
+                                                motif_spec.uses("af3_projection")
+                                                or motif_spec.uses("af3_soft_projection")
+                                            ) else None,
+                                            current_structure_path=copied_file)
         else:
             results_op= AF3Designer_model.single_file_process(json_path=json_path,
                                               out_dir=target_dir,
@@ -430,13 +466,21 @@ def af3_op_af3_eval(pdb_file: str,
                                             ref_time_steps =ref_time_steps,
                                             cyclic=cyclic,
                                             num_samples=5,
-                                            motif_spec=motif_spec if motif_spec is not None and motif_spec.uses("af3_projection") else None)
+                                            motif_spec=motif_spec if motif_spec is not None and (
+                                                motif_spec.uses("af3_projection")
+                                                or motif_spec.uses("af3_soft_projection")
+                                            ) else None,
+                                            current_structure_path=copied_file)
         
         if results_op:
             # get output path
             tag =f"{tag}".lower()
             cif_path = os.path.join(target_dir, tag.replace(".pdb", ""), 
                                   tag.replace(".pdb", "") + "_model.cif")
+            if not os.path.exists(cif_path):
+                print(f"AF3 returned no structure file: {cif_path}")
+                _mark_metrics_failed(metrics, "HalluDesign_Status")
+                return metrics, copied_file, chain_number_list_cdr
             
             metrics = process_confidence_metrics_af3(results_op,
                                                      cif_path, copied_file,
@@ -455,11 +499,12 @@ def af3_op_af3_eval(pdb_file: str,
                 return metrics, copied_file,chain_number_list_cdr
         else:
             print(f"AF3 failed, keep old file to go on")
-            metrics['HalluDesign_Status'] = 'Failed'
+            _mark_metrics_failed(metrics, "HalluDesign_Status")
             return metrics, copied_file,chain_number_list_cdr
             
     except Exception as e:
         print(f"file error: {str(e)}")
+        _mark_metrics_failed(metrics, "HalluDesign_Status")
         return metrics, copied_file,chain_number_list_cdr
     
 
@@ -469,6 +514,112 @@ try:
     current_dir = os.path.dirname(os.path.abspath(__file__))    
     sys.path.insert(0,os.path.join(current_dir,"Protenix"))
     from Protenix.runner.inference import ProtenixInferrer
+    from protenix.data.json_to_feature import SampleDictToFeatures
+
+    def _protenix_atom_key(atom):
+        return (
+            str(atom.chain_id).strip(),
+            int(atom.res_id),
+            str(atom.atom_name).strip(),
+        )
+
+    def _build_protenix_reference_coordinates(input_json_path, pdb_path):
+        """Align PDB coordinates to the atom layout generated from Protenix JSON.
+
+        Protenix adds terminal atoms such as OXT while a PDB written by MPNN
+        commonly does not.  Passing raw PDB coordinates therefore creates an
+        off-by-one tensor.  The JSON-derived layout is the authoritative order.
+        """
+        with open(input_json_path, "r", encoding="utf-8") as handle:
+            input_data = json.load(handle)
+        if isinstance(input_data, list):
+            if len(input_data) != 1:
+                raise ValueError(
+                    "Reference coordinate alignment expects exactly one Protenix job."
+                )
+            input_data = input_data[0]
+
+        layout = SampleDictToFeatures(input_data).get_atom_array()
+        source = read_pdb_to_atom_array(pdb_path)
+        source_coordinates = {}
+        for atom in source:
+            key = _protenix_atom_key(atom)
+            if key in source_coordinates:
+                raise ValueError(f"Duplicate PDB atom identifier: {key}")
+            source_coordinates[key] = np.asarray(atom.coord, dtype=np.float32)
+
+        coordinates = np.empty((len(layout), 3), dtype=np.float32)
+        missing = []
+        for index, atom in enumerate(layout):
+            key = _protenix_atom_key(atom)
+            coordinate = source_coordinates.get(key)
+            if coordinate is None:
+                missing.append((index, key))
+            else:
+                coordinates[index] = coordinate
+
+        backbone_atoms = {"N", "CA", "C", "O"}
+        missing_backbone = [
+            item for item in missing if item[1][2] in backbone_atoms
+        ]
+        if missing_backbone:
+            raise ValueError(
+                "PDB is missing backbone atoms required by the Protenix input: "
+                f"{[key for _, key in missing_backbone[:8]]}"
+            )
+
+        missing_sidechain = []
+        for index, (chain_id, res_id, atom_name) in missing:
+            residue_keys = {
+                key: value
+                for key, value in source_coordinates.items()
+                if key[:2] == (chain_id, res_id)
+            }
+            if atom_name == "OXT":
+                carbon = residue_keys.get((chain_id, res_id, "C"))
+                oxygen = residue_keys.get((chain_id, res_id, "O"))
+                if carbon is not None and oxygen is not None:
+                    direction = carbon - oxygen
+                    norm = np.linalg.norm(direction)
+                    coordinates[index] = (
+                        carbon + direction / norm * 1.25
+                        if norm > 1e-6 else carbon
+                    )
+                elif carbon is not None:
+                    coordinates[index] = carbon
+                elif residue_keys:
+                    coordinates[index] = np.mean(list(residue_keys.values()), axis=0)
+                else:
+                    raise ValueError(
+                        "Cannot construct a terminal reference coordinate for "
+                        f"missing atom: {(chain_id, res_id, atom_name)}"
+                    )
+                continue
+
+            # Sequence redesign can change the side-chain topology between
+            # cycles.  The backbone remains the trustworthy reference; seed a
+            # newly introduced side-chain atom at CA so Protenix can denoise it.
+            ca = residue_keys.get((chain_id, res_id, "CA"))
+            if ca is not None:
+                coordinates[index] = ca
+                missing_sidechain.append((chain_id, res_id, atom_name))
+            elif residue_keys:
+                coordinates[index] = np.mean(list(residue_keys.values()), axis=0)
+                missing_sidechain.append((chain_id, res_id, atom_name))
+            else:
+                raise ValueError(
+                    f"Cannot construct a reference coordinate for missing atom: "
+                    f"{(chain_id, res_id, atom_name)}"
+                )
+
+        if missing:
+            print(f"Added reference coordinates for missing atoms: {len(missing)}")
+            if missing_sidechain:
+                print(
+                    "Initialized missing side-chain atoms at the residue CA: "
+                    f"{len(missing_sidechain)}"
+                )
+        return torch.from_numpy(coordinates)
 
     def protenix_op_protenix_eval(pdb_file: str, 
                       cycle: int,
@@ -553,7 +704,8 @@ try:
             ]
             if motif_spec is not None:
                 fixed_residues_for_MPNN = sorted(
-                    set(fixed_residues_for_MPNN) | set(motif_spec.target_residue_strings())
+                    set(fixed_residues_for_MPNN)
+                    | set(motif_spec.target_residue_strings())
                 )
                 metrics["motif_residue_count"] = len(motif_spec.target_residues)
             # for symmetry chains and res design
@@ -644,7 +796,7 @@ try:
                             else:
                                 input_json[0]['sequences'][count]['proteinChain']["sequence"] = get_chain_sequence(copied_file,chain_labels[protein_count])
                                 
-                            protein_count +=1
+                        protein_count +=1
 
                     if chain == 'ligand':
                         input_json[0]['sequences'][count]["ligand"]["ligand"] = sm[sm_count]
@@ -667,25 +819,27 @@ try:
 
                 # pkl_process
                 pkl_path = os.path.join(target_dir, f'{os.path.splitext(copied_file)[0]}.pkl')
-                atom_array = read_pdb_to_atom_array(copied_file)
-                pred_coordinates_tensor = extract_coordinates(atom_array, as_tensor=True)
-                print(pred_coordinates_tensor.shape)
-
-                torch.save(pred_coordinates_tensor,pkl_path)
-                if cycle == 0 and random_init and random_init_sequences is None:
-                    results_op=Designer_model.predict(
-                    input_json_path=json_path,
-                    dump_dir=target_dir,
-                    seed=123,
-                    motif_spec=motif_spec if motif_spec is not None and motif_spec.uses("protenix_projection") else None,
+                use_reference_coordinates = not (
+                    (cycle == 0 and random_init and random_init_sequences is None)
+                    or ref_time_steps == 200
+                )
+                if use_reference_coordinates:
+                    pred_coordinates_tensor = _build_protenix_reference_coordinates(
+                        json_path, copied_file
                     )
-                elif ref_time_steps == 200:
-                    print("pure prediction")
+                    print(pred_coordinates_tensor.shape)
+                    torch.save(pred_coordinates_tensor, pkl_path)
+
+                if not use_reference_coordinates:
                     results_op=Designer_model.predict(
                     input_json_path=json_path,
                     dump_dir=target_dir,
                     seed=123,
-                    motif_spec=motif_spec if motif_spec is not None and motif_spec.uses("protenix_projection") else None,
+                    motif_spec=motif_spec if motif_spec is not None and (
+                        motif_spec.uses("protenix_projection")
+                        or motif_spec.uses("protenix_soft_projection")
+                    ) else None,
+                    current_structure_path=copied_file,
                     )
                 else:
                     print(json_path, pkl_path)
@@ -695,12 +849,20 @@ try:
                     seed=123,
                     input_atom_array_path=pkl_path,
                     diffusion_steps = ref_time_steps,
-                    motif_spec=motif_spec if motif_spec is not None and motif_spec.uses("protenix_projection") else None,
+                    motif_spec=motif_spec if motif_spec is not None and (
+                        motif_spec.uses("protenix_projection")
+                        or motif_spec.uses("protenix_soft_projection")
+                    ) else None,
+                    current_structure_path=copied_file,
                     )
 
                 if results_op:
                     # get Protenix output path
                     cif_path = os.path.join(target_dir,tag,"seed_123","predictions",f"{tag}_seed_123_sample_0.cif")
+                    if not os.path.exists(cif_path):
+                        print(f"Protenix returned no structure file: {cif_path}")
+                        _mark_metrics_failed(metrics, "HalluDesign_Status")
+                        return metrics, copied_file, chain_number_list_cdr
                     metrics = process_confidence_metrics_protenix(results_op,
                                                              cif_path, copied_file,
                                                              metrics[0]["origin_path"],
@@ -720,11 +882,12 @@ try:
 
                 else:
                     print("Protenix processing failed; continuing with the original file")
-                    metrics['Protenix_Status'] = 'Failed'
+                    _mark_metrics_failed(metrics, "HalluDesign_Status")
                     return metrics, copied_file,chain_number_list_cdr
 
         except Exception as e:
             print(f"Failed to process the file: {str(e)}")
+            _mark_metrics_failed(metrics, "HalluDesign_Status")
             return metrics, copied_file,chain_number_list_cdr
         
     def cross_model_op_protenix_eval(pdb_file: str, 
@@ -814,7 +977,8 @@ try:
             ]
             if motif_spec is not None:
                 fixed_residues_for_MPNN = sorted(
-                    set(fixed_residues_for_MPNN) | set(motif_spec.target_residue_strings())
+                    set(fixed_residues_for_MPNN)
+                    | set(motif_spec.target_residue_strings())
                 )
                 metrics["motif_residue_count"] = len(motif_spec.target_residues)
             # for symmetry chains and res design
@@ -908,7 +1072,7 @@ try:
                             if int(symmetry_segments) >= 2:
                                 seq_segment = len(input_json[0]['sequences'][count]['proteinChain']["sequence"])//int(symmetry_segments)
                                 input_json[0]['sequences'][count]['proteinChain']["sequence"]  = input_json[0]['sequences'][count]['proteinChain']["sequence"][:seq_segment] * int(symmetry_segments)
-                            protein_count +=1
+                        protein_count +=1
 
                     if chain == 'ligand':
                         if enzyme_design:
@@ -940,25 +1104,27 @@ try:
 
                 # pkl_process
                 pkl_path = os.path.join(target_dir, f'{os.path.splitext(copied_file)[0]}.pkl')
-                atom_array = read_pdb_to_atom_array(copied_file)
-                pred_coordinates_tensor = extract_coordinates(atom_array, as_tensor=True)
-                print(pred_coordinates_tensor.shape)
-
-                torch.save(pred_coordinates_tensor,pkl_path)
-                if cycle == 0 and random_init and random_init_sequences is None:
-                    results_op=Designer_model.predict(
-                    input_json_path=json_path,
-                    dump_dir=target_dir,
-                    seed=123,
-                    motif_spec=motif_spec if motif_spec is not None and motif_spec.uses("protenix_projection") else None,
+                use_reference_coordinates = not (
+                    (cycle == 0 and random_init and random_init_sequences is None)
+                    or ref_time_steps == 200
+                )
+                if use_reference_coordinates:
+                    pred_coordinates_tensor = _build_protenix_reference_coordinates(
+                        json_path, copied_file
                     )
-                elif ref_time_steps == 200:
-                    print("pure prediction")
+                    print(pred_coordinates_tensor.shape)
+                    torch.save(pred_coordinates_tensor, pkl_path)
+
+                if not use_reference_coordinates:
                     results_op=Designer_model.predict(
                     input_json_path=json_path,
                     dump_dir=target_dir,
                     seed=123,
-                    motif_spec=motif_spec if motif_spec is not None and motif_spec.uses("protenix_projection") else None,
+                    motif_spec=motif_spec if motif_spec is not None and (
+                        motif_spec.uses("protenix_projection")
+                        or motif_spec.uses("protenix_soft_projection")
+                    ) else None,
+                    current_structure_path=copied_file,
                     )
                 else:
                     print(json_path, pkl_path)
@@ -968,12 +1134,20 @@ try:
                     seed=123,
                     input_atom_array_path=pkl_path,
                     diffusion_steps = ref_time_steps,
-                    motif_spec=motif_spec if motif_spec is not None and motif_spec.uses("protenix_projection") else None,
+                    motif_spec=motif_spec if motif_spec is not None and (
+                        motif_spec.uses("protenix_projection")
+                        or motif_spec.uses("protenix_soft_projection")
+                    ) else None,
+                    current_structure_path=copied_file,
                     )
 
                 if results_op:
                     # get Protenix output path
                     cif_path = os.path.join(target_dir,tag,"seed_123","predictions",f"{tag}_seed_123_sample_0.cif")
+                    if not os.path.exists(cif_path):
+                        print(f"Protenix returned no structure file: {cif_path}")
+                        _mark_metrics_failed(metrics, "HalluDesign_Status")
+                        return metrics, copied_file, chain_number_list_cdr
                     metrics = process_confidence_metrics_protenix(results_op,
                                                              cif_path, copied_file,
                                                              metrics[0]["origin_path"],
@@ -992,9 +1166,11 @@ try:
                         return metrics, copied_file,chain_number_list_cdr
                 else:
                     print("Protenix processing failed; continuing with the original file")
-                    metrics['op_Status'] = 'Failed'
+                    _mark_metrics_failed(metrics, "HalluDesign_Status")
                     return metrics, copied_file,chain_number_list_cdr
             else:
+                if not run_af3:
+                    return metrics, copied_file, chain_number_list_cdr
                 print("using subprocess AF3 to optmize")
                 template_path = extra_json_path
                 with open(template_path, 'r') as f:
@@ -1064,36 +1240,59 @@ try:
         
                 # run AF3
                 pkl_path = os.path.join(target_dir, f'{os.path.splitext(copied_file)[0]}.pkl')
+                needs_reference = ref_time_steps != 200 and not (
+                    cycle == 0 and random_init and random_init_sequences is None
+                )
+                if needs_reference and (
+                    not result or error or not os.path.exists(pkl_path)
+                ):
+                    raise RuntimeError(
+                        f"AF3 reference-coordinate preprocessing failed for {copied_file}: {error}"
+                    )
                 clear_gpu_memory()
                 print(json_path,  target_dir, pkl_path, ref_time_steps)
                 dump_result = pkl_path.replace(".pkl", "_ref_eval_result.pkl")
                 if ref_time_steps == 200:
                     print("pure prediction")
-                    run_AF3_evaluation_with_ref_eval(target_dir,
-                                                    json_path,
-                                                    None, 
-                                                    dump_result, 
-                                                    ref_time_steps, 5,
-                                                    cyclic,
-                                                    motif_spec.path if motif_spec is not None and motif_spec.uses("af3_projection") else "")
+                    af3_success = run_AF3_evaluation_with_ref_eval(
+                        target_dir, json_path, None, dump_result, ref_time_steps, 5,
+                        cyclic,
+                        motif_spec.path if motif_spec is not None
+                        and (motif_spec.uses("af3_projection")
+                             or motif_spec.uses("af3_soft_projection")) else "",
+                        copied_file,
+                        motif_spec.soft_projection_weight
+                        if motif_spec is not None else None,
+                    )
                 elif cycle == 0 and random_init and random_init_sequences is None:
                     print("pure prediction")
-                    run_AF3_evaluation_with_ref_eval(target_dir,
-                                                    json_path,
-                                                    None, 
-                                                    dump_result, 
-                                                    ref_time_steps, 5,
-                                                    cyclic,
-                                                    motif_spec.path if motif_spec is not None and motif_spec.uses("af3_projection") else "")
+                    af3_success = run_AF3_evaluation_with_ref_eval(
+                        target_dir, json_path, None, dump_result, ref_time_steps, 5,
+                        cyclic,
+                        motif_spec.path if motif_spec is not None
+                        and (motif_spec.uses("af3_projection")
+                             or motif_spec.uses("af3_soft_projection")) else "",
+                        copied_file,
+                        motif_spec.soft_projection_weight
+                        if motif_spec is not None else None,
+                    )
                 else:
-                    run_AF3_evaluation_with_ref_eval(target_dir,
-                                                    json_path,
-                                                    pkl_path, 
-                                                    dump_result, 
-                                                    ref_time_steps, 5,
-                                                    cyclic,
-                                                    motif_spec.path if motif_spec is not None and motif_spec.uses("af3_projection") else "")
+                    af3_success = run_AF3_evaluation_with_ref_eval(
+                        target_dir, json_path, pkl_path, dump_result, ref_time_steps, 5,
+                        cyclic,
+                        motif_spec.path if motif_spec is not None
+                        and (motif_spec.uses("af3_projection")
+                             or motif_spec.uses("af3_soft_projection")) else "",
+                        copied_file,
+                        motif_spec.soft_projection_weight
+                        if motif_spec is not None else None,
+                    )
                 
+                if not af3_success or not os.path.exists(dump_result):
+                    print(f"AF3 did not produce the result file: {dump_result}")
+                    _mark_metrics_failed(metrics, "HalluDesign_Status")
+                    return metrics, copied_file, chain_number_list_cdr
+
                 with open(dump_result, "rb") as f:
                     results_op = pickle.load(f)
 
@@ -1101,8 +1300,17 @@ try:
                     
                     # get output path
                     tag =f"{tag}".lower()
-                    cif_path = os.path.join(target_dir, tag.replace(".pdb", ""), tag.replace(".pdb", ""), 
-                                          tag.replace(".pdb", "") + "_model.cif")
+                    json_stem = os.path.splitext(os.path.basename(json_path))[0]
+                    cif_path = os.path.join(
+                        target_dir,
+                        json_stem,
+                        tag.replace(".pdb", ""),
+                        tag.replace(".pdb", "") + "_model.cif",
+                    )
+                    if not os.path.exists(cif_path):
+                        print(f"AF3 returned no structure file: {cif_path}")
+                        _mark_metrics_failed(metrics, "HalluDesign_Status")
+                        return metrics, copied_file, chain_number_list_cdr
                     
                     metrics = process_confidence_metrics_af3(results_op,
                                                              cif_path, copied_file,
@@ -1122,11 +1330,12 @@ try:
                         return metrics, copied_file,chain_number_list_cdr
                 else:
                     print(f"AF3 failed, keep old file to go on")
-                    metrics['HalluDesign_Status'] = 'Failed'
+                    _mark_metrics_failed(metrics, "HalluDesign_Status")
                     return metrics, copied_file,chain_number_list_cdr
 
         except Exception as e:
             print(f"Failed to process the file: {str(e)}")
+            _mark_metrics_failed(metrics, "HalluDesign_Status")
             return metrics, copied_file,chain_number_list_cdr
 except Exception as e:
     print(f"unable to import Protenix modules: {str(e)}")
@@ -1136,7 +1345,8 @@ import os
 
 def run_AF3_evaluation_with_ref_eval(output_dir, json_path, pkl_path, dump_result,
                                      ref_time_steps, num_samples, cyclic=1,
-                                     motif_spec_path=""):
+                                     motif_spec_path="", current_structure_path=None,
+                                     soft_projection_weight=None):
     try:
 
         af3_script = Path("eval") / "af3_init.py"
@@ -1152,11 +1362,16 @@ def run_AF3_evaluation_with_ref_eval(output_dir, json_path, pkl_path, dump_resul
             f"--output_base_dir={output_dir}",
             f"--cyclic={cyclic}",
             f"--num_samples={num_samples}",
-            f"--ref_pdb_path={pkl_path}",
             f"--dump_result={dump_result}"
         ]
+        if pkl_path:
+            command.append(f"--ref_pdb_path={pkl_path}")
         if motif_spec_path:
             command.append(f"--motif_spec={motif_spec_path}")
+        if current_structure_path:
+            command.append(f"--current_structure_path={current_structure_path}")
+        if soft_projection_weight is not None:
+            command.append(f"--soft_projection_weight={soft_projection_weight}")
 
         print("Running command:", " ".join(command))
 
@@ -1187,6 +1402,8 @@ def run_AF3_evaluation_with_ref_eval(output_dir, json_path, pkl_path, dump_resul
 
     except Exception as e:
         print("An unexpected error occurred:", str(e))
+
+    return False
 
 import os
 import re

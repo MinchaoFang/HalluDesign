@@ -261,16 +261,53 @@ class ModelRunner:
     ref_pdb_path: os.PathLike[str] | None,  # 
     ref_pkl_dump_path: os.PathLike[str] | None,
     motif_spec=None,
+    current_structure_path: os.PathLike[str] | None = None,
   ) -> base_model.ModelResult:
     """Computes a forward pass of the model on a featurised example."""
-    if motif_spec is not None:
-      from motif_constraints import build_af3_dense_projection
+    use_motif_projection = motif_spec is not None and (
+        motif_spec.uses("af3_projection")
+        or motif_spec.uses("af3_soft_projection")
+    )
+    if use_motif_projection:
+      from motif_constraints import (
+          build_af3_dense_projection,
+          build_af3_smoothing_metadata,
+      )
       motif_positions, motif_mask = build_af3_dense_projection(
-          motif_spec, featurised_example['token_atoms_layout'].item()
+          motif_spec, featurised_example['token_atoms_layout'].item(),
+          current_structure_path=(str(current_structure_path)
+                                  if current_structure_path else None),
       )
       featurised_example = dict(featurised_example)
       featurised_example['motif_fixed_positions'] = motif_positions
       featurised_example['motif_fixed_mask'] = motif_mask
+      featurised_example['motif_projection_weight'] = (
+          1.0 if motif_spec.uses("af3_projection")
+          else motif_spec.soft_projection_weight
+      )
+      featurised_example['motif_noisy_projection_weight'] = (
+          1.0 if motif_spec.uses("af3_projection")
+          else motif_spec.noisy_projection_weight
+      )
+      featurised_example['motif_denoising_projection_weight'] = (
+          1.0 if motif_spec.uses("af3_projection")
+          else motif_spec.denoising_projection_weight
+      )
+      featurised_example['motif_x0_projection_weight'] = (
+          motif_spec.x0_projection_weight
+      )
+      if motif_spec.smooth_neighbor_residues > 0:
+        smoothing_weights, smoothing_source_indices = (
+            build_af3_smoothing_metadata(
+                motif_spec,
+                featurised_example['token_atoms_layout'].item(),
+                motif_mask,
+            )
+        )
+        featurised_example['motif_smoothing_weights'] = smoothing_weights
+        featurised_example['motif_smoothing_source_indices'] = (
+            smoothing_source_indices
+        )
 
     featurised_example = jax.device_put(
         jax.tree_util.tree_map(
@@ -324,6 +361,9 @@ class ModelRunner:
     )
   def update_config(self,config: base_config.BaseConfig):
     self._model_config = config
+    # _model closes over the config at construction time. Rebuild the cached
+    # JAX function when diffusion/refinement settings change between cycles.
+    self.__dict__.pop('_model', None)
     
 
 
@@ -350,6 +390,7 @@ def predict_structure(
     ref_pkl_dump_path: os.PathLike[str] | str,
     buckets: Sequence[int] | None = None,
     motif_spec=None,
+    current_structure_path: os.PathLike[str] | str | None = None,
 ) -> Sequence[ResultsForSeed]:
   """Runs the full inference pipeline to predict structures for each seed."""
 
@@ -370,7 +411,8 @@ def predict_structure(
     inference_start_time = time.time()
     rng_key = jax.random.PRNGKey(seed)
     result = model_runner.run_inference(
-        example, rng_key, ref_pdb_path, ref_pkl_dump_path, motif_spec
+        example, rng_key, ref_pdb_path, ref_pkl_dump_path, motif_spec,
+        current_structure_path
     )
     print(
         f'Running model inference for seed {seed} took '
@@ -492,6 +534,7 @@ def process_fold_input(
     ref_pkl_dump_path: os.PathLike[str] | None,
     buckets: Sequence[int] | None = None,
     motif_spec=None,
+    current_structure_path: os.PathLike[str] | str | None = None,
 ) -> folding_input.Input | Sequence[ResultsForSeed]:
   """Runs data pipeline and/or inference on a single fold input.
 
@@ -553,6 +596,7 @@ def process_fold_input(
         ref_pdb_path=ref_pdb_path,
         ref_pkl_dump_path=ref_pkl_dump_path,
         motif_spec=motif_spec,
+        current_structure_path=current_structure_path,
         buckets=buckets)
     print(
         f'Writing outputs for {fold_input.name} for seed(s)'
@@ -626,7 +670,8 @@ class AF3DesignerPack:
                             ref_time_evaluation = 0,
                             cyclic = None,
                             ref_pkl_dump_path=None,
-                            motif_spec=None):
+                            motif_spec=None,
+                            current_structure_path=None):
         """"""
 
         fold_inputs = folding_input.load_fold_inputs_from_path(
@@ -655,6 +700,7 @@ class AF3DesignerPack:
                 ref_pdb_path=ref_pdb_path if ref_pdb_path else None,
                 ref_pkl_dump_path=ref_pkl_dump_path if ref_pkl_dump_path else None,
                 motif_spec=motif_spec,
+                current_structure_path=current_structure_path,
                 buckets=self._BUCKETS if self._BUCKETS else []
             )
         return inference_output

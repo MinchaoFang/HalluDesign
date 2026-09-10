@@ -132,7 +132,13 @@ class InferenceRunner(object):
     @torch.no_grad()
     def predict(self, data: Mapping[str, Mapping[str, Any]],
                  diffusion_steps=0, input_atom_array_path="",
-                 motif_fixed_positions=None, motif_fixed_mask=None) -> dict[str, torch.Tensor]:
+                 motif_fixed_positions=None, motif_fixed_mask=None,
+                 motif_projection_weight=None,
+                 motif_noisy_projection_weight=None,
+                 motif_denoising_projection_weight=None,
+                 motif_x0_projection_weight=None,
+                 motif_smoothing_weights=None,
+                 motif_smoothing_source_indices=None) -> dict[str, torch.Tensor]:
         eval_precision = {
             "fp32": torch.float32,
             "bf16": torch.bfloat16,
@@ -156,6 +162,12 @@ class InferenceRunner(object):
                 input_atom_array_path=input_atom_array_path,
                 motif_fixed_positions=motif_fixed_positions,
                 motif_fixed_mask=motif_fixed_mask,
+                motif_projection_weight=motif_projection_weight,
+                motif_noisy_projection_weight=motif_noisy_projection_weight,
+                motif_denoising_projection_weight=motif_denoising_projection_weight,
+                motif_x0_projection_weight=motif_x0_projection_weight,
+                motif_smoothing_weights=motif_smoothing_weights,
+                motif_smoothing_source_indices=motif_smoothing_source_indices,
             )
 
         return prediction
@@ -221,8 +233,11 @@ def update_inference_configs(configs: Any, N_token: int):
 
 
 def infer_predict(runner: InferenceRunner, configs: Any, diffusion_steps=0,
-                  input_atom_array_path="", motif_spec=None) -> None:
+                  input_atom_array_path="", motif_spec=None,
+                  motif_projection_weight=None,
+                  current_structure_path=None) -> None:
     # Data
+    prediction = None
     logger.info(f"Loading data from\n{configs.input_json_path}")
     try:
         dataloader = get_inference_dataloader(configs=configs)
@@ -234,9 +249,12 @@ def infer_predict(runner: InferenceRunner, configs: Any, diffusion_steps=0,
         return
 
     num_data = len(dataloader.dataset)
+    requested_projection_weight = motif_projection_weight
     for seed in configs.seeds:
         seed_everything(seed=seed, deterministic=configs.deterministic)
         for batch in dataloader:
+            sample_name = "unknown_sample"
+            prediction = None
             try:
                 data, atom_array, data_error_message = batch[0]
                 sample_name = data["sample_name"]
@@ -258,14 +276,73 @@ def infer_predict(runner: InferenceRunner, configs: Any, diffusion_steps=0,
                 runner.update_model_configs(new_configs)
                 motif_positions = None
                 motif_mask = None
-                if motif_spec is not None:
+                resolved_projection_weight = None
+                use_protenix_projection = motif_spec is not None and (
+                    motif_spec.uses("protenix_projection")
+                    or motif_spec.uses("protenix_soft_projection")
+                )
+                noisy_projection_weight = None
+                denoising_projection_weight = None
+                x0_projection_weight = None
+                if use_protenix_projection:
                     from motif_constraints import build_protenix_projection
-                    positions, mask = build_protenix_projection(motif_spec, atom_array)
+                    from motif_constraints import build_protenix_smoothing_metadata
+                    positions, mask = build_protenix_projection(
+                        motif_spec,
+                        atom_array,
+                        current_structure_path=current_structure_path,
+                    )
                     motif_positions = torch.as_tensor(positions, device=runner.device)
                     motif_mask = torch.as_tensor(mask, device=runner.device)
+                    resolved_projection_weight = (
+                        1.0 if motif_spec.uses("protenix_projection")
+                        else (
+                            requested_projection_weight
+                            if requested_projection_weight is not None
+                            else motif_spec.soft_projection_weight
+                        )
+                    )
+                    noisy_projection_weight = (
+                        1.0 if motif_spec.uses("protenix_projection")
+                        else (
+                            requested_projection_weight
+                            if requested_projection_weight is not None
+                            else motif_spec.noisy_projection_weight
+                        )
+                    )
+                    denoising_projection_weight = (
+                        1.0 if motif_spec.uses("protenix_projection")
+                        else (
+                            requested_projection_weight
+                            if requested_projection_weight is not None
+                            else motif_spec.denoising_projection_weight
+                        )
+                    )
+                    x0_projection_weight = motif_spec.x0_projection_weight
+                    smoothing_weights = None
+                    smoothing_source_indices = None
+                    if motif_spec.smooth_neighbor_residues > 0:
+                        smoothing_weights, smoothing_source_indices = (
+                            build_protenix_smoothing_metadata(
+                                motif_spec, atom_array, mask
+                            )
+                        )
+                        smoothing_weights = torch.as_tensor(
+                            smoothing_weights, device=runner.device
+                        )
+                        smoothing_source_indices = torch.as_tensor(
+                            smoothing_source_indices, device=runner.device
+                        )
+                else:
+                    smoothing_weights = None
+                    smoothing_source_indices = None
                 prediction = runner.predict(
                     data, diffusion_steps, input_atom_array_path,
-                    motif_positions, motif_mask,
+                    motif_positions, motif_mask, resolved_projection_weight,
+                    noisy_projection_weight, denoising_projection_weight,
+                    x0_projection_weight,
+                    smoothing_weights,
+                    smoothing_source_indices,
                 )
                 #torch.save(prediction,"/storage/caolongxingLab/fangminchao/software/Protenix/prediction.pkl")
                 runner.dumper.dump(
@@ -283,8 +360,12 @@ def infer_predict(runner: InferenceRunner, configs: Any, diffusion_steps=0,
                 #)
                 torch.cuda.empty_cache()
             except Exception as e:
-                error_message = f"[Rank {DIST_WRAPPER.rank}]{data['sample_name']} {e}:\n{traceback.format_exc()}"
+                error_message = (
+                    f"[Rank {DIST_WRAPPER.rank}]{sample_name} {e}:\n"
+                    f"{traceback.format_exc()}"
+                )
                 logger.info(error_message)
+                prediction = None
                 # Save error info
                 with open(opjoin(runner.error_dir, f"{sample_name}.txt"), "a") as f:
                     f.write(error_message)
@@ -432,10 +513,15 @@ class ProtenixInferrer:
             else:
                 arg_list.append(f"--{key}={value}")
         
-        # Add deepspeed attention config from environment variable
-        use_deepspeed_evo_attention = os.environ.get("USE_DEEPSPEED_EVO_ATTENTION", "false") == "true"
-        if use_deepspeed_evo_attention:
-            arg_list.append("--use_deepspeed_evo_attention=True")
+        # Preserve the upstream default when the environment variable is not
+        # set, while allowing callers (including benchmark scripts) to opt out
+        # of the hardware-dependent fused attention kernel.
+        deepspeed_env = os.environ.get("USE_DEEPSPEED_EVO_ATTENTION")
+        if deepspeed_env is not None:
+            use_deepspeed_evo_attention = deepspeed_env.lower() == "true"
+            arg_list.append(
+                f"--use_deepspeed_evo_attention={str(use_deepspeed_evo_attention).lower()}"
+            )
 
         # Combine base, data, and inference configs
         combined_configs = {**self.configs_base, **{"data": self.data_configs}, **self.inference_configs}
@@ -459,6 +545,8 @@ class ProtenixInferrer:
                 input_atom_array_path: str = "", 
                 diffusion_steps: int = 0,
                 motif_spec=None,
+                motif_projection_weight=None,
+                current_structure_path=None,
                 ) -> None:
         """
         Executes the prediction process with the specified input, output, and seed.
@@ -489,7 +577,7 @@ class ProtenixInferrer:
         # Call the original infer_predict function with the updated runner and configs
         prediction=infer_predict(
             self.runner, current_configs, diffusion_steps, input_atom_array_path,
-            motif_spec,
+            motif_spec, motif_projection_weight, current_structure_path,
         )
 
         return prediction

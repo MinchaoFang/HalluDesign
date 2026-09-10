@@ -83,6 +83,35 @@ def random_augmentation(
   return augmented_positions * mask[..., None]
 
 
+def rigid_align_reference(
+    reference_positions: jnp.ndarray,
+    target_positions: jnp.ndarray,
+    alignment_mask: jnp.ndarray,
+) -> jnp.ndarray:
+  """Fit reference motif coordinates to their current diffusion pose."""
+  reference_flat = reference_positions.reshape((-1, 3))
+  target_flat = target_positions.reshape((-1, 3))
+  weights = alignment_mask.reshape((-1,)).astype(reference_positions.dtype)
+  weight_sum = jnp.maximum(jnp.sum(weights), 1.0)
+  reference_center = jnp.sum(
+      reference_flat * weights[:, None], axis=0
+  ) / weight_sum
+  target_center = jnp.sum(target_flat * weights[:, None], axis=0) / weight_sum
+  reference_centered = reference_flat - reference_center
+  target_centered = target_flat - target_center
+  covariance = (reference_centered * weights[:, None]).T @ target_centered
+  left, _, right_transposed = jnp.linalg.svd(covariance, full_matrices=False)
+  handedness = jnp.where(
+      jnp.linalg.det(left @ right_transposed) < 0, -1.0, 1.0
+  )
+  correction = jnp.diag(jnp.asarray([1.0, 1.0, handedness]))
+  rotation = left @ correction @ right_transposed
+  rigid_aligned = reference_centered @ rotation + target_center
+  translated = reference_flat - reference_center + target_center
+  aligned = jnp.where(weight_sum >= 3.0, rigid_aligned, translated)
+  return aligned.reshape(reference_positions.shape)
+
+
 def noise_schedule(t, smin=0.0004, smax=160.0, p=7):
   return (
       SIGMA_DATA
@@ -327,10 +356,28 @@ def center_and_scale_reference(
     Returns:
         Centered and appropriately noised reference positions
     """
+    mask = jnp.asarray(mask, dtype=bool)
+    ref_positions = jnp.asarray(ref_positions)
+    expected_shape = mask.shape + (3,)
+    # Legacy preprocessing caches include a singleton sample dimension.
+    if ref_positions.shape == (1,) + expected_shape:
+      ref_positions = ref_positions[0]
+    elif ref_positions.shape != expected_shape:
+      raise ValueError(
+          'Reference positions do not match the AF3 atom mask: '
+          f'positions={ref_positions.shape}, expected={expected_shape} '
+          f'or {(1,) + expected_shape}'
+      )
+
     if center:
-      center_mask = mask if center_mask is None else center_mask
+      center_mask = mask if center_mask is None else jnp.asarray(center_mask, dtype=bool)
+      if center_mask.shape != mask.shape:
+        raise ValueError(
+            'Reference center mask does not match the AF3 atom mask: '
+            f'center_mask={center_mask.shape}, mask={mask.shape}'
+        )
       center_of_mass = jnp.sum(
-          ref_positions * center_mask[..., None], axis=(0, 1)
+          ref_positions * center_mask[..., None], axis=tuple(range(mask.ndim))
       ) / jnp.maximum(jnp.sum(center_mask), 1)
       ref_positions = ref_positions - center_of_mass
     
@@ -368,6 +415,12 @@ def sample(
   mask = batch.predicted_structure_info.atom_mask
   motif_fixed_positions = batch.motif_fixed_positions
   motif_fixed_mask = batch.motif_fixed_mask
+  legacy_projection_weight = batch.motif_projection_weight
+  noisy_projection_weight = batch.motif_noisy_projection_weight
+  denoising_projection_weight = batch.motif_denoising_projection_weight
+  x0_projection_weight = batch.motif_x0_projection_weight
+  motif_smoothing_weights = batch.motif_smoothing_weights
+  motif_smoothing_source_indices = batch.motif_smoothing_source_indices
   use_motif_projection = motif_fixed_positions is not None and motif_fixed_mask is not None
   if use_motif_projection:
     if motif_fixed_mask.shape != mask.shape or motif_fixed_positions.shape != mask.shape + (3,):
@@ -376,35 +429,131 @@ def sample(
           f'mask={motif_fixed_mask.shape}, positions={motif_fixed_positions.shape}, '
           f'expected mask={mask.shape}, positions={mask.shape + (3,)}'
       )
+    if (motif_smoothing_weights is None) != (
+        motif_smoothing_source_indices is None
+    ):
+      raise ValueError(
+          'Motif smoothing weights and source indices must be provided together.'
+      )
+    use_motif_smoothing = motif_smoothing_weights is not None
+    if use_motif_smoothing:
+      if (motif_smoothing_weights.shape != mask.shape or
+          motif_smoothing_source_indices.shape != mask.shape):
+        raise ValueError(
+            'Motif smoothing arrays do not match AF3 dense atom layout: '
+            f'weights={motif_smoothing_weights.shape}, '
+            f'source_indices={motif_smoothing_source_indices.shape}, '
+            f'expected={mask.shape}'
+        )
+      motif_smoothing_weights = jnp.asarray(
+          motif_smoothing_weights, dtype=jnp.float32
+      )
+      motif_smoothing_source_indices = jnp.asarray(
+          motif_smoothing_source_indices, dtype=jnp.int32
+      )
+  motif_reference = (
+      motif_fixed_positions
+      if use_motif_projection
+      else jnp.zeros(mask.shape + (3,), dtype=jnp.float32)
+  )
 
-  def apply_motif_projection(positions):
+  def _resolve_projection_weight(weight):
+    if weight is not None:
+      return jnp.asarray(weight)
+    if legacy_projection_weight is not None:
+      return jnp.asarray(legacy_projection_weight)
+    return jnp.asarray(1.0, dtype=jnp.float32)
+
+  noisy_projection_weight = _resolve_projection_weight(noisy_projection_weight)
+  denoising_projection_weight = _resolve_projection_weight(
+      denoising_projection_weight
+  )
+  # x0 guidance is intentionally independent from the legacy projection
+  # weight.  A missing field therefore keeps the original sampler unchanged.
+  x0_projection_weight = (
+      jnp.asarray(x0_projection_weight)
+      if x0_projection_weight is not None
+      else jnp.asarray(0.0, dtype=jnp.float32)
+  )
+
+  def apply_motif_projection(positions, reference_positions, weight):
     if not use_motif_projection:
       return positions
-    return jnp.where(
-        motif_fixed_mask[..., None], motif_fixed_positions, positions
+    delta = reference_positions - positions
+    if use_motif_smoothing:
+      flat_delta = delta.reshape(delta.shape[:-3] + (-1, 3))
+      flat_source_indices = motif_smoothing_source_indices.reshape((-1,))
+      source_delta = flat_delta[..., flat_source_indices, :].reshape(delta.shape)
+      neighbor_weights = jnp.where(
+          motif_fixed_mask, 0.0, motif_smoothing_weights
+      )
+      soft_positions = positions + weight * (
+          delta * motif_fixed_mask[..., None]
+          + source_delta * neighbor_weights[..., None]
+      )
+      hard_positions = jnp.where(
+          motif_fixed_mask[..., None], reference_positions, positions
+      ) + source_delta * neighbor_weights[..., None]
+      return jnp.where(weight >= 1.0, hard_positions, soft_positions)
+    soft_positions = positions + weight * delta * motif_fixed_mask[..., None]
+    # Preserve exact hard-projection behavior when the configured weight is 1.
+    hard_positions = jnp.where(
+        motif_fixed_mask[..., None], reference_positions, positions
+    )
+    return jnp.where(weight >= 1.0, hard_positions, soft_positions)
+
+  def align_motif_to_positions(positions):
+    if not use_motif_projection:
+      return None
+    return rigid_align_reference(
+        motif_fixed_positions, positions, motif_fixed_mask
     )
 
   def apply_denoising_step(carry, noise_level):
     key, positions, noise_level_prev = carry
     key, key_noise, key_aug = jax.random.split(key, 3)
-    if not use_motif_projection:
-      positions = random_augmentation(
-          rng_key=key_aug, positions=positions, mask=mask
+    positions = random_augmentation(
+        rng_key=key_aug, positions=positions, mask=mask
+    )
+    aligned_reference = motif_reference
+    if use_motif_projection:
+      aligned_reference = rigid_align_reference(
+          motif_reference, positions, motif_fixed_mask
       )
-    positions = apply_motif_projection(positions)
-    
     gamma = config.gamma_0 * (noise_level > config.gamma_min)
     t_hat = noise_level_prev * (1 + gamma)
 
     noise_scale = config.noise_scale * jnp.sqrt(t_hat**2 - noise_level_prev**2)
     noise = noise_scale * jax.random.normal(key_noise, positions.shape)
-    positions_noisy = apply_motif_projection(positions + noise)
+    noisy_reference = (
+        aligned_reference + noise if use_motif_projection else None
+    )
+    positions_noisy = apply_motif_projection(
+        positions + noise, noisy_reference, noisy_projection_weight
+    )
     positions_denoised = denoising_step(positions_noisy, t_hat)
-    grad = (positions_noisy - positions_denoised) / t_hat
+
+    # The model predicts a full, continuous x0.  Fit the native motif to that
+    # predicted motif pose, then apply only a residual correction before the
+    # sampler computes its update direction.  This lets the scaffold respond
+    # to the motif instead of repairing a discontinuity after Euler stepping.
+    x0_aligned_reference = aligned_reference
+    if use_motif_projection:
+      x0_aligned_reference = rigid_align_reference(
+          motif_reference, positions_denoised, motif_fixed_mask
+      )
+    positions_x0_conditioned = apply_motif_projection(
+        positions_denoised,
+        x0_aligned_reference,
+        x0_projection_weight,
+    )
+    grad = (positions_noisy - positions_x0_conditioned) / t_hat
 
     d_t = noise_level - t_hat
     positions_out = apply_motif_projection(
-        positions_noisy + config.step_scale * d_t * grad
+        positions_noisy + config.step_scale * d_t * grad,
+        aligned_reference,
+        denoising_projection_weight,
     )
 
     return (key, positions_out, noise_level), positions_out
@@ -412,8 +561,21 @@ def sample(
   num_samples = config.num_samples
 
   noise_levels = noise_schedule(jnp.linspace(0, 1, config.steps + 1))
+
+  if hasattr(config, 'ref_time_steps'):
+    if config.ref_time_steps < 0 or config.ref_time_steps > config.steps:
+      raise ValueError(
+          'ref_time_steps must be between 0 and the configured diffusion steps: '
+          f'ref_time_steps={config.ref_time_steps}, steps={config.steps}'
+      )
+  if (hasattr(config, 'ref_time_evaluation') and config.ref_time_evaluation
+      and config.num_samples < 2):
+    raise ValueError(
+        'ref_time_evaluation requires num_samples >= 2 so two reference samples '
+        'can be emitted.'
+    )
   
-  if hasattr(batch, "ref_pdb"):
+  if batch.ref_pdb is not None:
     print("Attribute 'ref_pdb' exists in batch.")
     print(batch.ref_pdb)
   else:
@@ -423,7 +585,9 @@ def sample(
       apply_denoising_step, in_axes=(0, None), split_rng=(not hk.running_init())
   )
   #print(noise_levels)
-  if hasattr(config, "ref_time_evaluation") and hasattr(config, "ref_time_steps") and batch.ref_pdb != None:
+  if (hasattr(config, "ref_time_evaluation")
+      and hasattr(config, "ref_time_steps")
+      and batch.ref_pdb is not None):
     # ref_time_evaluation
     num_samples = config.num_samples - 2
     num_samples_ref = 2
@@ -435,7 +599,7 @@ def sample(
         start_noise_level,
         key,
         center=True,
-        center_mask=motif_fixed_mask if use_motif_projection else None,
+        center_mask=None,
     )
     #ref_positions = jnp.tile(ref_positions, (num_samples_ref, 1, 1, 1))
     #init = (
@@ -446,9 +610,8 @@ def sample(
     #result_ref, _ = hk.scan(apply_denoising_step, init, noise_levels[config.steps-config.ref_time_steps:], unroll=4)
     #_, positions_ref, _ = result_ref
     # normal_evaluation
-    positions_ref = jnp.tile(
-        apply_motif_projection(ref_positions), (num_samples_ref, 1, 1, 1)
-    )
+    ref_motif_reference = align_motif_to_positions(ref_positions)
+    positions_ref = jnp.tile(ref_positions, (num_samples_ref, 1, 1, 1))
     print("NO ref_guided diffusion")
     key, noise_key = jax.random.split(key)
     positions = jax.random.normal(noise_key, (num_samples,) + mask.shape + (3,))
@@ -461,7 +624,7 @@ def sample(
     result_noise, _ = hk.scan(apply_denoising_step, init, noise_levels[1:], unroll=4)
     _, positions_noise, _ = result_noise
     positions_out = jnp.concatenate((positions_ref, positions_noise), axis=0)
-  elif hasattr(config, "ref_time_steps") and batch.ref_pdb != None:
+  elif hasattr(config, "ref_time_steps") and batch.ref_pdb is not None:
     print(f"ref_guided diffusion {config.steps-config.ref_time_steps} - {config.steps} steps")
     start_noise_level = noise_levels[config.steps-config.ref_time_steps]
     ref_positions = center_and_scale_reference(
@@ -470,7 +633,7 @@ def sample(
         start_noise_level,
         key,
         center=True,
-        center_mask=motif_fixed_mask if use_motif_projection else None,
+        center_mask=None,
     )
     ref_positions = jnp.tile(ref_positions, (num_samples, 1, 1, 1))
     init = (

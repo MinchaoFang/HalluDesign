@@ -139,6 +139,12 @@ def sample_diffusion(
     input_atom_array_path: str = "",
     motif_fixed_positions: Optional[torch.Tensor] = None,
     motif_fixed_mask: Optional[torch.Tensor] = None,
+    motif_projection_weight: Optional[float] = None,
+    motif_noisy_projection_weight: Optional[float] = None,
+    motif_denoising_projection_weight: Optional[float] = None,
+    motif_x0_projection_weight: Optional[float] = None,
+    motif_smoothing_weights: Optional[torch.Tensor] = None,
+    motif_smoothing_source_indices: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
     """Implements Algorithm 18 in AF3.
     It performances denoising steps from time 0 to time T.
@@ -173,6 +179,27 @@ def sample_diffusion(
     device = s_inputs.device
     dtype = s_inputs.dtype
     use_motif_projection = motif_fixed_positions is not None and motif_fixed_mask is not None
+    if motif_noisy_projection_weight is None:
+        motif_noisy_projection_weight = (
+            1.0 if motif_projection_weight is None else motif_projection_weight
+        )
+    if motif_denoising_projection_weight is None:
+        motif_denoising_projection_weight = (
+            1.0
+            if motif_projection_weight is None
+            else motif_projection_weight
+        )
+    # x0 guidance is independent from the legacy/post-step projection fields.
+    # A missing value keeps the original sampler behavior unchanged.
+    if motif_x0_projection_weight is None:
+        motif_x0_projection_weight = 0.0
+    for projection_name, projection_weight in (
+        ("motif_noisy_projection_weight", motif_noisy_projection_weight),
+        ("motif_denoising_projection_weight", motif_denoising_projection_weight),
+        ("motif_x0_projection_weight", motif_x0_projection_weight),
+    ):
+        if not 0.0 <= float(projection_weight) <= 1.0:
+            raise ValueError(f"{projection_name} must be between 0 and 1.")
     if use_motif_projection:
         motif_fixed_positions = motif_fixed_positions.to(device=device, dtype=dtype)
         motif_fixed_mask = motif_fixed_mask.to(device=device, dtype=torch.bool)
@@ -188,12 +215,107 @@ def sample_diffusion(
                 f"positions={tuple(motif_fixed_positions.shape)}, "
                 f"expected={tuple(motif_fixed_mask.shape) + (3,)}"
             )
+        if (motif_smoothing_weights is None) != (
+            motif_smoothing_source_indices is None
+        ):
+            raise ValueError(
+                "Motif smoothing weights and source indices must be provided together."
+            )
+        use_motif_smoothing = motif_smoothing_weights is not None
+        if use_motif_smoothing:
+            if (motif_smoothing_weights.shape != motif_fixed_mask.shape or
+                    motif_smoothing_source_indices.shape != motif_fixed_mask.shape):
+                raise ValueError(
+                    "Motif smoothing arrays do not match Protenix atom layout: "
+                    f"weights={tuple(motif_smoothing_weights.shape)}, "
+                    f"source_indices={tuple(motif_smoothing_source_indices.shape)}, "
+                    f"expected={tuple(motif_fixed_mask.shape)}"
+                )
+            motif_smoothing_weights = motif_smoothing_weights.to(
+                device=device, dtype=dtype
+            )
+            motif_smoothing_source_indices = motif_smoothing_source_indices.to(
+                device=device, dtype=torch.long
+            )
 
-    def apply_motif_projection(positions: torch.Tensor) -> torch.Tensor:
+    def apply_motif_projection(
+        positions: torch.Tensor,
+        reference_positions: Optional[torch.Tensor],
+        projection_weight: float,
+    ) -> torch.Tensor:
         if not use_motif_projection:
             return positions
+        if reference_positions is None:
+            reference_positions = motif_fixed_positions
+        delta = reference_positions - positions
+        if use_motif_smoothing:
+            source_delta = torch.index_select(
+                delta, dim=-2, index=motif_smoothing_source_indices
+            )
+            neighbor_weights = torch.where(
+                motif_fixed_mask, torch.zeros_like(motif_smoothing_weights),
+                motif_smoothing_weights,
+            )
+            soft_positions = positions + float(projection_weight) * (
+                delta * motif_fixed_mask[..., None]
+                + source_delta * neighbor_weights[..., None]
+            )
+            hard_positions = torch.where(
+                motif_fixed_mask[..., None], reference_positions, positions
+            ) + source_delta * neighbor_weights[..., None]
+            if float(projection_weight) >= 1.0:
+                return hard_positions
+            return soft_positions
+        soft_positions = positions + float(projection_weight) * delta * motif_fixed_mask[..., None]
+        if float(projection_weight) >= 1.0:
+            return torch.where(motif_fixed_mask[..., None], reference_positions, positions)
+        return soft_positions
+
+    def rigid_align_reference(
+        reference_positions: torch.Tensor,
+        target_positions: torch.Tensor,
+    ) -> torch.Tensor:
+        """Fit reference motif coordinates to their current diffusion pose."""
+        weights = motif_fixed_mask.to(dtype=target_positions.dtype)
+        weights = torch.broadcast_to(weights, target_positions.shape[:-1])
+        reference_positions = torch.broadcast_to(
+            reference_positions, target_positions.shape
+        )
+        weight_sum = weights.sum(dim=-1, keepdim=True).clamp_min(1.0)
+        reference_center = (
+            reference_positions * weights[..., None]
+        ).sum(dim=-2, keepdim=True) / weight_sum[..., None]
+        target_center = (
+            target_positions * weights[..., None]
+        ).sum(dim=-2, keepdim=True) / weight_sum[..., None]
+        reference_centered = reference_positions - reference_center
+        target_centered = target_positions - target_center
+        covariance = torch.einsum(
+            "...ni,...nj->...ij",
+            reference_centered * weights[..., None],
+            target_centered,
+        )
+        left, _, right_transposed = torch.linalg.svd(
+            covariance.float(), full_matrices=False
+        )
+        left = left.to(dtype=target_positions.dtype)
+        right_transposed = right_transposed.to(dtype=target_positions.dtype)
+        handedness = torch.where(
+            torch.linalg.det(left @ right_transposed) < 0,
+            target_positions.new_tensor(-1.0),
+            target_positions.new_tensor(1.0),
+        )
+        correction = torch.diag_embed(
+            torch.stack(
+                [torch.ones_like(handedness), torch.ones_like(handedness), handedness],
+                dim=-1,
+            )
+        )
+        rotation = left @ correction @ right_transposed
+        rigid_aligned = reference_centered @ rotation + target_center
+        translated = reference_positions - reference_center + target_center
         return torch.where(
-            motif_fixed_mask[..., None], motif_fixed_positions, positions
+            (weight_sum >= 3.0)[..., None], rigid_aligned, translated
         )
 
     total_schedule_steps = len(noise_schedule) - 1
@@ -210,50 +332,42 @@ def sample_diffusion(
     def _chunk_sample_diffusion(chunk_n_sample, inplace_safe):
         # init noise
         # [..., N_sample, N_atom, 3]
-        x_l = noise_schedule[0] * torch.randn(
+        start_idx = total_schedule_steps - num_denoise_iterations
+        x_l = noise_schedule[start_idx] * torch.randn(
             size=(*batch_shape, chunk_n_sample, N_atom, 3), device=device, dtype=dtype
         )  # NOTE: set seed in distributed training
         #print(f"Initialized x_l with noise. Shape: {x_l.shape}")
-        start_idx = total_schedule_steps - num_denoise_iterations
         end_idx = total_schedule_steps # For c_tau_last
         if input_atom_array_path:
             origin_positions = torch.load(input_atom_array_path, map_location=device)
-            if use_motif_projection:
-                motif_weight = motif_fixed_mask.to(
-                    device=origin_positions.device, dtype=origin_positions.dtype
+            origin_positions = torch.as_tensor(
+                origin_positions, device=device, dtype=dtype
+            )
+            if origin_positions.ndim != 2 or origin_positions.shape[-1] != 3:
+                raise ValueError(
+                    "Reference coordinates must have shape [N_atom, 3], got "
+                    f"{tuple(origin_positions.shape)}."
                 )
-                motif_center = (
-                    origin_positions * motif_weight[..., None]
-                ).sum(dim=-2, keepdim=True) / motif_weight.sum().clamp_min(1)
-                origin_positions = origin_positions - motif_center
+            if origin_positions.shape[0] != N_atom:
+                raise ValueError(
+                    "Reference coordinate atom count does not match the Protenix "
+                    f"input: reference={origin_positions.shape[0]}, input={N_atom}."
+                )
+            # Keep the full current structure in the same centered frame as
+            # the aligned motif reference. Never center around the motif: that
+            # would move the scaffold and can amplify chain breaks.
+            origin_positions = origin_positions - origin_positions.mean(
+                dim=-2, keepdim=True
+            )
             origin_positions = origin_positions.unsqueeze(0).repeat(chunk_n_sample, 1, 1)
             
-            if origin_positions.shape != x_l.shape:
-                print(origin_positions.shape, x_l.shape)
-                plus = origin_positions.shape[1] - x_l.shape[1] 
-                last_step = origin_positions[:, plus:, :]  # shape: (1, 1, 3)
-                x_l = torch.cat([origin_positions, last_step], dim=1)  # shape: (1, L+1, 3)
-                
-            else:
-                x_l = origin_positions
+            x_l = origin_positions
             noise = torch.randn_like(x_l)
             x_l = x_l + 1 * noise_schedule[start_idx].item() * noise
             print(f"Initialized x_l from {input_atom_array_path}. Shape: {x_l.shape}")
         else:
             print(f"Initialized x_l with noise. Shape: {x_l.shape}")
-        
-        schedule_slice_end = 1 + num_denoise_iterations # +1 because zip iterates over pairs
-        
-        # Ensure we don't go out of bounds of noise_schedule
-        if schedule_slice_end > len(noise_schedule):
-            schedule_slice_end = len(noise_schedule)
-            current_num_denoise_iterations = schedule_slice_end - 1
-            print(f"Adjusted diffusion steps to {current_num_denoise_iterations} due to noise_schedule length.")
-        else:
-            current_num_denoise_iterations = num_denoise_iterations
-
-
-        #print(f"Starting {current_num_denoise_iterations} denoising steps.")
+        #print(f"Starting {num_denoise_iterations} denoising steps.")
         
         
         
@@ -266,23 +380,32 @@ def sample_diffusion(
             #print(f"Denoising step {k+1}/{num_denoise_iterations} (c_tau_last={c_tau_last:.4f}, c_tau={c_tau:.4f})")
             
             # [..., N_sample, N_atom, 3]
-            if not use_motif_projection:
-                x_l = (
-                    centre_random_augmentation(x_input_coords=x_l, N_sample=1)
-                    .squeeze(dim=-3)
-                    .to(dtype)
-                )
-            x_l = apply_motif_projection(x_l)
-
+            x_l = (
+                centre_random_augmentation(x_input_coords=x_l, N_sample=1)
+                .squeeze(dim=-3)
+                .to(dtype)
+            )
+            motif_reference = (
+                rigid_align_reference(motif_fixed_positions, x_l)
+                if use_motif_projection else None
+            )
             # Denoise with a predictor-corrector sampler
             # 1. Add noise to move x_{c_tau_last} to x_{t_hat}
             gamma = float(gamma0) if c_tau > gamma_min else 0
             t_hat = c_tau_last * (gamma + 1)
 
             delta_noise_level = torch.sqrt(t_hat**2 - c_tau_last**2)
-            x_noisy = apply_motif_projection(x_l + noise_scale_lambda * delta_noise_level * torch.randn(
+            noise = noise_scale_lambda * delta_noise_level * torch.randn(
                 size=x_l.shape, device=device, dtype=dtype
-            ))
+            )
+            noisy_reference = (
+                motif_reference + noise if motif_reference is not None else None
+            )
+            x_noisy = apply_motif_projection(
+                x_l + noise,
+                noisy_reference,
+                motif_noisy_projection_weight,
+            )
 
             # 2. Denoise from x_{t_hat} to x_{c_tau}
             # Euler step only
@@ -303,12 +426,28 @@ def sample_diffusion(
                 inplace_safe=inplace_safe,
             )
 
-            delta = (x_noisy - x_denoised) / t_hat[
+            # The denoiser predicts a complete x0.  Fit the native motif to
+            # that prediction's motif pose and apply only a local residual
+            # correction before computing the diffusion update direction.
+            x0_aligned_reference = motif_reference
+            if use_motif_projection:
+                x0_aligned_reference = rigid_align_reference(
+                    motif_fixed_positions, x_denoised
+                )
+            x0_conditioned = apply_motif_projection(
+                x_denoised,
+                x0_aligned_reference,
+                motif_x0_projection_weight,
+            )
+
+            delta = (x_noisy - x0_conditioned) / t_hat[
                 ..., None, None
             ]  # Line 9 of AF3 uses 'x_l_hat' instead, which we believe  is a typo.
             dt = c_tau - t_hat
             x_l = apply_motif_projection(
-                x_noisy + step_scale_eta * dt[..., None, None] * delta
+                x_noisy + step_scale_eta * dt[..., None, None] * delta,
+                motif_reference,
+                motif_denoising_projection_weight,
             )
 
         return x_l

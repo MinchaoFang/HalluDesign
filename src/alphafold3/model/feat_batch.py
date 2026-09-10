@@ -34,6 +34,12 @@ class Batch:
   ref_pdb: Optional[jnp.ndarray] = None  
   motif_fixed_positions: Optional[jnp.ndarray] = None
   motif_fixed_mask: Optional[jnp.ndarray] = None
+  motif_projection_weight: Optional[jnp.ndarray] = None
+  motif_noisy_projection_weight: Optional[jnp.ndarray] = None
+  motif_denoising_projection_weight: Optional[jnp.ndarray] = None
+  motif_x0_projection_weight: Optional[jnp.ndarray] = None
+  motif_smoothing_weights: Optional[jnp.ndarray] = None
+  motif_smoothing_source_indices: Optional[jnp.ndarray] = None
   @property
   def num_res(self) -> int:
     return self.token_features.aatype.shape[-1]
@@ -62,6 +68,16 @@ class Batch:
         ref_pdb=jnp.array(batch["ref_atom_positions"]) if "ref_atom_positions" in batch else None,
         motif_fixed_positions=batch.get("motif_fixed_positions"),
         motif_fixed_mask=batch.get("motif_fixed_mask"),
+        motif_projection_weight=batch.get("motif_projection_weight"),
+        motif_noisy_projection_weight=batch.get("motif_noisy_projection_weight"),
+        motif_denoising_projection_weight=batch.get(
+            "motif_denoising_projection_weight"
+        ),
+        motif_x0_projection_weight=batch.get("motif_x0_projection_weight"),
+        motif_smoothing_weights=batch.get("motif_smoothing_weights"),
+        motif_smoothing_source_indices=batch.get(
+            "motif_smoothing_source_indices"
+        ),
     )
     
   def as_data_dict(self) -> features.BatchDict:
@@ -83,4 +99,20 @@ class Batch:
       output['motif_fixed_positions'] = self.motif_fixed_positions
     if self.motif_fixed_mask is not None:
       output['motif_fixed_mask'] = self.motif_fixed_mask
+    if self.motif_projection_weight is not None:
+      output['motif_projection_weight'] = self.motif_projection_weight
+    if self.motif_noisy_projection_weight is not None:
+      output['motif_noisy_projection_weight'] = self.motif_noisy_projection_weight
+    if self.motif_denoising_projection_weight is not None:
+      output['motif_denoising_projection_weight'] = (
+          self.motif_denoising_projection_weight
+      )
+    if self.motif_x0_projection_weight is not None:
+      output['motif_x0_projection_weight'] = self.motif_x0_projection_weight
+    if self.motif_smoothing_weights is not None:
+      output['motif_smoothing_weights'] = self.motif_smoothing_weights
+    if self.motif_smoothing_source_indices is not None:
+      output['motif_smoothing_source_indices'] = (
+          self.motif_smoothing_source_indices
+      )
     return output

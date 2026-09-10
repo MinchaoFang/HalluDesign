@@ -315,6 +315,12 @@ class Protenix(nn.Module):
         input_atom_array_path: str = "",
         motif_fixed_positions: Optional[torch.Tensor] = None,
         motif_fixed_mask: Optional[torch.Tensor] = None,
+        motif_projection_weight: Optional[float] = None,
+        motif_noisy_projection_weight: Optional[float] = None,
+        motif_denoising_projection_weight: Optional[float] = None,
+        motif_x0_projection_weight: Optional[float] = None,
+        motif_smoothing_weights: Optional[torch.Tensor] = None,
+        motif_smoothing_source_indices: Optional[torch.Tensor] = None,
     ) -> tuple[dict[str, torch.Tensor], dict[str, Any], dict[str, Any]]:
         """
         Main inference loop (multiple model seeds) for the Alphafold3 model.
@@ -348,6 +354,12 @@ class Protenix(nn.Module):
                 input_atom_array_path= input_atom_array_path,
                 motif_fixed_positions=motif_fixed_positions,
                 motif_fixed_mask=motif_fixed_mask,
+                motif_projection_weight=motif_projection_weight,
+                motif_noisy_projection_weight=motif_noisy_projection_weight,
+                motif_denoising_projection_weight=motif_denoising_projection_weight,
+                motif_x0_projection_weight=motif_x0_projection_weight,
+                motif_smoothing_weights=motif_smoothing_weights,
+                motif_smoothing_source_indices=motif_smoothing_source_indices,
             )
             pred_dicts.append(pred_dict)
             log_dicts.append(log_dict)
@@ -387,6 +399,12 @@ class Protenix(nn.Module):
         input_atom_array_path: str = "",
         motif_fixed_positions: Optional[torch.Tensor] = None,
         motif_fixed_mask: Optional[torch.Tensor] = None,
+        motif_projection_weight: Optional[float] = None,
+        motif_noisy_projection_weight: Optional[float] = None,
+        motif_denoising_projection_weight: Optional[float] = None,
+        motif_x0_projection_weight: Optional[float] = None,
+        motif_smoothing_weights: Optional[torch.Tensor] = None,
+        motif_smoothing_source_indices: Optional[torch.Tensor] = None,
     ) -> tuple[dict[str, torch.Tensor], dict[str, Any], dict[str, Any]]:
         """
         Main inference loop (single model seed) for the Alphafold3 model.
@@ -450,6 +468,12 @@ class Protenix(nn.Module):
             input_atom_array_path = input_atom_array_path,
             motif_fixed_positions=motif_fixed_positions,
             motif_fixed_mask=motif_fixed_mask,
+            motif_projection_weight=motif_projection_weight,
+            motif_noisy_projection_weight=motif_noisy_projection_weight,
+            motif_denoising_projection_weight=motif_denoising_projection_weight,
+            motif_x0_projection_weight=motif_x0_projection_weight,
+            motif_smoothing_weights=motif_smoothing_weights,
+            motif_smoothing_source_indices=motif_smoothing_source_indices,
         )
         print(pred_dict["coordinate"].shape)
         step_diffusion = time.time()
@@ -593,8 +617,6 @@ class Protenix(nn.Module):
                     device=s_inputs.device,
                     dtype=s_inputs.dtype,
                 ),
-                motif_fixed_positions=motif_fixed_positions,
-                motif_fixed_mask=motif_fixed_mask,
             )
             coordinate_mini.detach_()
             pred_dict["coordinate_mini"] = coordinate_mini
@@ -687,6 +709,12 @@ class Protenix(nn.Module):
         input_atom_array_path: str = "",
         motif_fixed_positions: Optional[torch.Tensor] = None,
         motif_fixed_mask: Optional[torch.Tensor] = None,
+        motif_projection_weight: Optional[float] = None,
+        motif_noisy_projection_weight: Optional[float] = None,
+        motif_denoising_projection_weight: Optional[float] = None,
+        motif_x0_projection_weight: Optional[float] = None,
+        motif_smoothing_weights: Optional[torch.Tensor] = None,
+        motif_smoothing_source_indices: Optional[torch.Tensor] = None,
     ) -> tuple[dict[str, torch.Tensor], dict[str, Any], dict[str, Any]]:
         """
         Forward pass of the Alphafold3 model.
@@ -738,6 +766,12 @@ class Protenix(nn.Module):
                 input_atom_array_path=input_atom_array_path,
                 motif_fixed_positions=motif_fixed_positions,
                 motif_fixed_mask=motif_fixed_mask,
+                motif_projection_weight=motif_projection_weight,
+                motif_noisy_projection_weight=motif_noisy_projection_weight,
+                motif_denoising_projection_weight=motif_denoising_projection_weight,
+                motif_x0_projection_weight=motif_x0_projection_weight,
+                motif_smoothing_weights=motif_smoothing_weights,
+                motif_smoothing_source_indices=motif_smoothing_source_indices,
             )
             log_dict.update({"time": time_tracker})
         elif mode == "eval":

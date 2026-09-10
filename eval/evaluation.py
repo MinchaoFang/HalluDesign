@@ -70,6 +70,35 @@ def extract_coordinates(atom_array, as_tensor: bool = True):
 
 from scipy.stats import multivariate_normal
 
+
+def _mean_float(value):
+    """Return a Python float for tensors, arrays, and JSON lists."""
+    if hasattr(value, "detach"):
+        value = value.detach().cpu().numpy()
+    return float(np.asarray(value).mean())
+
+
+def _scalar_float(value):
+    """Return a Python float without assuming a tensor ``.item()`` method."""
+    if hasattr(value, "detach"):
+        value = value.detach().cpu().numpy()
+    return float(np.asarray(value))
+
+
+def _best_af3_result(results):
+    """Select the highest finite AF3 ranking result."""
+    best_score = float("-inf")
+    best_result = None
+    for results_for_seed in results or []:
+        for result in results_for_seed.inference_results:
+            ranking_score = _scalar_float(result.metadata["ranking_score"])
+            if np.isfinite(ranking_score) and ranking_score > best_score:
+                best_score = ranking_score
+                best_result = result
+    if best_result is None:
+        raise ValueError("AF3 returned no finite ranking score")
+    return best_result
+
 def generate_gaussian_from_residues(
     atom_array ,
     chain_id: str,
@@ -151,6 +180,9 @@ def generate_gaussian_from_residues(
         return sampled_points
 
 
+PROTENIX_EVAL_DIFFUSION_STEPS = 200
+
+
 def self_consistency_protenix(scaffold_path,
                         AF3Designer_model,
                         output_dir,
@@ -204,7 +236,9 @@ def self_consistency_protenix(scaffold_path,
                 input_json[0]['sequences'][count]["rnaSequence"]["sequence"] = rna[rna_count]
                 rna_count +=1
             count += 1
-        # Write the new JSON file
+        # Self-consistency evaluation must be an unconstrained fold of the
+        # ProteinMPNN sequence. Preserve only the benchmark's fixed motif
+        # sequence; do not inject motif templates or coordinates here.
         if motif_spec is not None:
             inject_protenix_motif_sequence(input_json, motif_spec)
         with open(json_path, 'w') as f:
@@ -216,19 +250,61 @@ def self_consistency_protenix(scaffold_path,
             input_json_path=json_path,
             dump_dir=output_dir,
             seed=123,
-            motif_spec=(
-                motif_spec if motif_spec is not None
-                and motif_spec.uses("protenix_projection") else None
-            ),
+            input_atom_array_path="",
+            diffusion_steps=PROTENIX_EVAL_DIFFUSION_STEPS,
+            motif_spec=None,
         )
 
-        max_ranking_score = 0
-        for _ in range(len(results_eval['summary_confidence'])):
-            ranking_score = results_eval['summary_confidence'][_]["ranking_score"]
+        tag = f"{scaffold_basename}_{seq_count}".lower()
+        summary_confidence = (
+            results_eval.get("summary_confidence", [])
+            if isinstance(results_eval, dict)
+            else []
+        )
+        if not summary_confidence:
+            metric["eval_status"] = "Failed"
+            metric["prediction_model"] = "Protenix"
+            metric["eval_plddt"] = float("-inf")
+            metric["eval_error"] = "Protenix returned no usable prediction"
+            metrics_to_tile.append(metric)
+            seq_count += 1
+            continue
+
+        max_ranking_score = float("-inf")
+        max_ranking = None
+        for _ in range(len(summary_confidence)):
+            ranking_score = _scalar_float(summary_confidence[_]["ranking_score"])
             #print(ranking_score)
-            if ranking_score > max_ranking_score:
+            if np.isfinite(ranking_score) and ranking_score > max_ranking_score:
                 max_ranking = _
                 max_ranking_score = ranking_score
+
+        if max_ranking is None:
+            metric["eval_status"] = "Failed"
+            metric["prediction_model"] = "Protenix"
+            metric["eval_plddt"] = float("-inf")
+            metric["eval_error"] = "Protenix returned no finite ranking score"
+            metrics_to_tile.append(metric)
+            seq_count += 1
+            continue
+
+        cif_path = os.path.join(
+            output_dir,
+            tag,
+            "seed_123",
+            "predictions",
+            f"{tag}_seed_123_sample_{max_ranking}.cif",
+        )
+        if not os.path.exists(cif_path):
+            metric["eval_status"] = "Failed"
+            metric["prediction_model"] = "Protenix"
+            metric["eval_plddt"] = float("-inf")
+            metric["eval_error"] = (
+                f"Selected Protenix sample {max_ranking} has no CIF output"
+            )
+            metrics_to_tile.append(metric)
+            seq_count += 1
+            continue
 
         #print(max_ranking_result.metadata.keys())
 
@@ -237,16 +313,13 @@ def self_consistency_protenix(scaffold_path,
         dict_result['ipae'] = None  
         dict_result['ipde'] = None  
 
-        dict_result['iptm'] = results_eval['summary_confidence'][max_ranking]['chain_iptm']
+        dict_result['iptm'] = summary_confidence[max_ranking]['chain_iptm']
         dict_result['chain_pair_pae_min'] = None
-        dict_result['chain_ptm'] = results_eval['summary_confidence'][max_ranking]['chain_ptm']
-        dict_result['chain_pair_iptm'] = results_eval['summary_confidence'][max_ranking]['chain_pair_iptm']
-        dict_result['ranking_confidence'] = results_eval['summary_confidence'][max_ranking]["ranking_score"]
+        dict_result['chain_ptm'] = summary_confidence[max_ranking]['chain_ptm']
+        dict_result['chain_pair_iptm'] = summary_confidence[max_ranking]['chain_pair_iptm']
+        dict_result['ranking_confidence'] = summary_confidence[max_ranking]["ranking_score"]
 
         #print(dict_result)
-        tag =f"{scaffold_basename}_{seq_count}".lower()
-        cif_path = os.path.join(output_dir,tag,"seed_123","predictions",f"{tag}_seed_123_sample_0.cif")
-        
         #confidence_json_path = os.path.join(output_dir,tag,f"{tag}_summary_confidences.json")
         #with open(confidence_json_path, 'r') as f:
         #    confidence_json = json.load(f)
@@ -255,24 +328,33 @@ def self_consistency_protenix(scaffold_path,
         
         metric["eval_status"] = "success"
         metric["eval_path"] = cif_path
-        metric['prediction_model'] = "AF3"
+        metric['prediction_model'] = "Protenix"
         metric['eval_plddt'] = calculate_average_b_factor(cif_path,[f"{_}" for _ in chain_labels])
         if fixed_residues_for_MPNN:
             metric['eval_plddt_fix'] ,metric['eval_plddt_redes'] = calculate_bfactor_averages_from_list(cif_path,fixed_residues_for_MPNN)
         chain_pair_iptm = dict_result['chain_pair_iptm']
         chain_pair_pae = dict_result["chain_pair_pae_min"]
-        metric['eval_iptm'] = dict_result['iptm'].mean().item()
-        metric['eval_ptm'] = dict_result['chain_ptm'].mean().item()
+        metric['eval_iptm'] = _mean_float(dict_result['iptm'])
+        metric['eval_ptm'] = _mean_float(dict_result['chain_ptm'])
         
-        metric['eval_pae'] =  None
-        metric['eval_pde'] =  None
+        full_data = results_eval.get("full_data", [])
+        if max_ranking < len(full_data):
+            metric['eval_pae'] = _mean_float(
+                full_data[max_ranking]["token_pair_pae"]
+            )
+            metric['eval_pde'] = _mean_float(
+                full_data[max_ranking]["token_pair_pde"]
+            )
+        else:
+            metric['eval_pae'] = None
+            metric['eval_pde'] = None
         metric['eval_ipae'] = None
         metric['eval_ipde'] = None
         
         for i in range(0,count):
             label = chain_labels[i]
             metric[f'eval_{label}_plddt'] = calculate_average_b_factor(cif_path,[label])
-            metric[f'eval_{label}_ptm'] = dict_result['chain_ptm'][i].item()
+            metric[f'eval_{label}_ptm'] = _scalar_float(dict_result['chain_ptm'][i])
         print("rmsd")
         try:
             rmsd_result = calculate_ca_rmsd(cif_path, scaffold_path,fixed_chains)
@@ -311,8 +393,10 @@ def self_consistency_protenix(scaffold_path,
                     all_iptm_to_protein.append(chain_pair_iptm[i][j])
                     all_iptm_to_protein.append(chain_pair_iptm[j][i])
             all_iptm_to_protein_val = [x for x in all_iptm_to_protein if x is not None]
-            if all_iptm_to_protein:
-                metric[f'eval_all_iptm_to_protein'] = (sum(all_iptm_to_protein_val) / len(all_iptm_to_protein_val)).item()
+            if all_iptm_to_protein_val:
+                metric[f'eval_all_iptm_to_protein'] = _scalar_float(
+                    sum(all_iptm_to_protein_val) / len(all_iptm_to_protein_val)
+                )
             else:
                 metric[f'eval_all_iptm_to_protein'] = 0
             
@@ -325,13 +409,13 @@ def self_consistency_protenix(scaffold_path,
                     cross_values_iptm.append(chain_pair_iptm[j][i])
                 cross_values_iptm = [x for x in cross_values_iptm if x is not None]
                 average_iptm = sum(cross_values_iptm) / len(cross_values_iptm) if cross_values_iptm else 0
-                metric[f'eval_{label}_iptm'] = average_iptm.item()
+                metric[f'eval_{label}_iptm'] = _scalar_float(average_iptm)
                 metric[f'eval_{label}_ipae'] = None
 
         seq_count += 1
         metrics_to_tile.append(metric)
     # ! remain to do, fix logits for reindex
-    metrics_to_tile.sort(key=lambda x: x['eval_plddt'], reverse=True)
+    metrics_to_tile.sort(key=lambda x: x.get('eval_plddt', float("-inf")), reverse=True)
     return metrics_to_tile
 
 
@@ -397,7 +481,9 @@ def self_consistency_af3(scaffold_path,
 
         # Write the new JSON file
         if motif_spec is not None:
-            inject_af3_motif_template(input_json, motif_spec, motif_spec.uses("template"))
+            # Evaluation is a normal unconstrained fold. Keep motif sequence
+            # identities fixed, but do not inject an AF3 template or projection.
+            inject_af3_motif_template(input_json, motif_spec, include_template=False)
 
         if replace_MSA:
             for _N in range(protein_count):
@@ -438,10 +524,7 @@ def self_consistency_af3(scaffold_path,
         print("normal AF3 batch diffusion")
         results_eval=AF3Designer_model.single_file_process(
             json_path, output_dir, cyclic=cyclic_prediction,
-            motif_spec=(
-                motif_spec if motif_spec is not None
-                and motif_spec.uses("af3_projection") else None
-            ),
+            motif_spec=None,
         )
         #print(results_eval)
         #import pickle
@@ -450,18 +533,16 @@ def self_consistency_af3(scaffold_path,
 
         #with open('/storage/caolab/fangmc/code/AF3Designer/results.pkl', 'wb') as f:
         #    pickle.dump(results_eval, f)
-        ranking_scores = []
-        max_ranking_score = None
-        max_ranking_result = None
-        for results_for_seed in results_eval:
-            seed = results_for_seed.seed
-            for sample_idx, result in enumerate(results_for_seed.inference_results):
-                #print(seed, sample_idx)
-                ranking_score = float(result.metadata['ranking_score'])
-                ranking_scores.append((seed, sample_idx, ranking_score))
-                if max_ranking_score is None or ranking_score > max_ranking_score:
-                    max_ranking_score = ranking_score
-                    max_ranking_result = result
+        try:
+            max_ranking_result = _best_af3_result(results_eval)
+        except ValueError as exc:
+            metric["eval_status"] = "Failed"
+            metric["prediction_model"] = "AF3"
+            metric["eval_plddt"] = float("-inf")
+            metric["eval_error"] = str(exc)
+            metrics_to_tile.append(metric)
+            seq_count += 1
+            continue
 
 
         #print(max_ranking_result.metadata.keys())
@@ -868,14 +949,24 @@ def process_confidence_metrics_protenix(results_op, cif_path: str, copied_file :
     """Process confidence metrics output by AF3"""
     try:
         #print(results_op)
-        max_ranking_score = -1000
+        metrics_tile = metrics_tile if isinstance(metrics_tile, list) else [metrics_tile]
+        if not isinstance(results_op, dict) or not results_op.get('summary_confidence'):
+            raise ValueError('Protenix returned no summary confidence values')
+
+        max_ranking_score = float('-inf')
+        max_ranking = None
         for _ in range(len(results_op['summary_confidence'])):
-            ranking_score = results_op['summary_confidence'][_]["ranking_score"]
+            ranking_score = _scalar_float(
+                results_op['summary_confidence'][_]["ranking_score"]
+            )
             #print(ranking_score)
-            if ranking_score > max_ranking_score:
+            if np.isfinite(ranking_score) and ranking_score > max_ranking_score:
                 max_ranking = _
                 max_ranking_score = ranking_score
         #print(max_ranking)
+
+        if max_ranking is None:
+            raise ValueError("Protenix returned no finite ranking score")
 
         dict_result ={}
         dict_result['iptm'] = results_op['summary_confidence'][max_ranking]['chain_iptm']
@@ -883,6 +974,8 @@ def process_confidence_metrics_protenix(results_op, cif_path: str, copied_file :
         dict_result['chain_pair_iptm'] = results_op['summary_confidence'][max_ranking]['chain_pair_iptm']
         dict_result['ranking_confidence'] = results_op['summary_confidence'][max_ranking]["ranking_score"]
 
+        if max_ranking is None or max_ranking >= len(results_op.get("full_data", [])):
+            raise ValueError('Protenix returned incomplete confidence data')
         data = results_op["full_data"][max_ranking]
 
         # 转为 NumPy 数组
@@ -890,14 +983,24 @@ def process_confidence_metrics_protenix(results_op, cif_path: str, copied_file :
         pde = np.array(data["token_pair_pde"])   # shape: (n_tokens, n_tokens)
         chain_ids = np.array(data["token_asym_id"])  # 每个 token 的链 ID
         n_tokens = len(chain_ids)
+        if (
+            pae.ndim != 2
+            or pde.ndim != 2
+            or pae.shape != (n_tokens, n_tokens)
+            or pde.shape != (n_tokens, n_tokens)
+        ):
+            raise ValueError(
+                "Protenix confidence arrays do not match token_asym_id: "
+                f"pae={pae.shape}, pde={pde.shape}, token_count={n_tokens}"
+            )
 
         global_pae = pae.mean()
         global_pde = pde.mean()
 
         # 2. global interface (definition-correct)
         interface_mask = chain_ids[:, None] != chain_ids[None, :]
-        global_ipae = pae[interface_mask].mean()
-        global_ipde = pde[interface_mask].mean()
+        global_ipae = pae[interface_mask].mean() if interface_mask.any() else None
+        global_ipde = pde[interface_mask].mean() if interface_mask.any() else None
 
         # 3. chain-pair iPAE / iPDE
         chain_pair_ipae = {}
@@ -908,8 +1011,8 @@ def process_confidence_metrics_protenix(results_op, cif_path: str, copied_file :
                 if c1 == c2:
                     continue
                 mask = np.outer(chain_ids==c1, chain_ids==c2)
-                chain_pair_ipae[(c1, c2)] = pae[mask].mean()
-                chain_pair_ipde[(c1, c2)] = pde[mask].mean()
+                chain_pair_ipae[(c1, c2)] = pae[mask].mean() if mask.any() else None
+                chain_pair_ipde[(c1, c2)] = pde[mask].mean() if mask.any() else None
         #print(dict_result)
         metrics ={}
         metrics['op_cif_path'] = cif_path
@@ -918,8 +1021,8 @@ def process_confidence_metrics_protenix(results_op, cif_path: str, copied_file :
         metrics["HalluDesign_Status"] = "Protenix_success"
 
         chain_pair_iptm = dict_result['chain_pair_iptm']
-        metrics['op_iptm'] = dict_result['iptm'].mean().item()
-        metrics['op_ptm'] = dict_result['chain_ptm'].mean().item()
+        metrics['op_iptm'] = _mean_float(dict_result['iptm'])
+        metrics['op_ptm'] = _mean_float(dict_result['chain_ptm'])
         metrics['op_pae'] = global_pae
         metrics['op_pde'] = global_pde
         metrics['op_ipae'] = global_ipae
@@ -929,7 +1032,7 @@ def process_confidence_metrics_protenix(results_op, cif_path: str, copied_file :
         for i in range(0,count):
             label = chain_labels[i]
             metrics[f'op_{label}_plddt'] = calculate_average_b_factor(cif_path,[label])
-            metrics[f'op_{label}_ptm'] = dict_result['chain_ptm'][i].item()
+            metrics[f'op_{label}_ptm'] = _scalar_float(dict_result['chain_ptm'][i])
         
         try:
             rmsd_result = calculate_ca_rmsd(cif_path, copied_file,fixed_chains)
@@ -980,12 +1083,16 @@ def process_confidence_metrics_protenix(results_op, cif_path: str, copied_file :
             all_ipae_to_protein = [x for x in all_ipae_to_protein if x is not None]
 
             if all_iptm_to_protein:
-                metrics[f'op_all_iptm_to_protein'] = (sum(all_iptm_to_protein) / len(all_iptm_to_protein)).item()
+                metrics[f'op_all_iptm_to_protein'] = _scalar_float(
+                    sum(all_iptm_to_protein) / len(all_iptm_to_protein)
+                )
             else:
                 metrics[f'op_all_iptm_to_protein'] = 0
 
             if all_ipae_to_protein:
-                metrics[f'op_all_ipae_to_protein'] = (sum(all_ipae_to_protein) / len(all_ipae_to_protein)).item()
+                metrics[f'op_all_ipae_to_protein'] = _scalar_float(
+                    sum(all_ipae_to_protein) / len(all_ipae_to_protein)
+                )
             else:
                 metrics[f'op_all_ipae_to_protein'] = 0
             for j in other_indices:
@@ -1002,7 +1109,7 @@ def process_confidence_metrics_protenix(results_op, cif_path: str, copied_file :
                 cross_values_ipae = [x for x in cross_values_ipae if x is not None]
                 average_iptm = sum(cross_values_iptm) / len(cross_values_iptm) if cross_values_iptm else 0
                 average_ipae = sum(cross_values_ipae) / len(cross_values_ipae) if cross_values_ipae else 0
-                metrics[f'op_{label}_iptm'] = average_iptm.item()
+                metrics[f'op_{label}_iptm'] = _scalar_float(average_iptm)
                 metrics[f'op_{label}_ipae'] = average_ipae
 
         for _ in metrics_tile:
@@ -1010,25 +1117,18 @@ def process_confidence_metrics_protenix(results_op, cif_path: str, copied_file :
         return metrics_tile
     
     except Exception as e:
-        print(f"Failed to process AF3 metrics: {str(e)}")
-        return metrics
+        print(f"Failed to process Protenix metrics: {str(e)}")
+        failed_metrics = metrics_tile if isinstance(metrics_tile, list) else [metrics_tile]
+        for metric in failed_metrics:
+            if isinstance(metric, dict):
+                metric["HalluDesign_Status"] = "Failed"
+        return failed_metrics
 
 def process_confidence_metrics_af3(results_op, cif_path: str, copied_file : str,scaffold_path, metrics_tile,pocket_res,chain_types,fixed_chains,count_tuple) -> Dict:
     """Process confidence metrics output by AF3"""
     try:
         
-        ranking_scores = []
-        max_ranking_score = None
-        max_ranking_result = None
-        for results_for_seed in results_op:
-            seed = results_for_seed.seed
-            for sample_idx, result in enumerate(results_for_seed.inference_results):
-                #print(seed, sample_idx)
-                ranking_score = float(result.metadata['ranking_score'])
-                ranking_scores.append((seed, sample_idx, ranking_score))
-                if max_ranking_score is None or ranking_score > max_ranking_score:
-                    max_ranking_score = ranking_score
-                    max_ranking_result = result
+        max_ranking_result = _best_af3_result(results_op)
 
 
         #print(max_ranking_result.metadata.keys())
@@ -1156,7 +1256,11 @@ def process_confidence_metrics_af3(results_op, cif_path: str, copied_file : str,
     
     except Exception as e:
         print(f"Failed to process AF3 metrics: {str(e)}")
-        return metrics
+        failed_metrics = metrics_tile if isinstance(metrics_tile, list) else [metrics_tile]
+        for metric in failed_metrics:
+            if isinstance(metric, dict):
+                metric["HalluDesign_Status"] = "Failed"
+        return failed_metrics
 
 class CoDP():
     def __init__(self,checkpoints_to_run,esm_name):
