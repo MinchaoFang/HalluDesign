@@ -1127,9 +1127,8 @@ try:
                 if results_op:
                     
                     # get output path
-                    tag =f"{tag}".lower()
-                    cif_path = os.path.join(target_dir, tag.replace(".pdb", ""), tag.replace(".pdb", ""), 
-                                          tag.replace(".pdb", "") + "_model.cif")
+                    tag = f"{tag}".lower()
+                    cif_path = _find_af3_cif(target_dir, tag)
                     
                     metrics = process_confidence_metrics_af3(results_op,
                                                              cif_path, copied_file,
@@ -1161,31 +1160,53 @@ import subprocess
 from pathlib import Path
 import os
 
+
+def _find_af3_cif(output_dir, job_name):
+    """Find the AF3 ranked CIF without depending on its output nesting."""
+    output_dir = Path(output_dir).resolve()
+    job_name = Path(job_name).stem
+    candidates = sorted(output_dir.rglob(f"{job_name}_model.cif"),
+                        key=lambda path: path.stat().st_mtime,
+                        reverse=True)
+    if not candidates:
+        raise FileNotFoundError(
+            f"AF3 output CIF {job_name}_model.cif was not found below {output_dir}"
+        )
+    return str(candidates[0])
+
+
 def run_AF3_evaluation_with_ref_eval(output_dir, json_path, pkl_path, dump_result,
                                      ref_time_steps, num_samples, cyclic=1):
     try:
 
-        af3_script = Path("eval") / "af3_init.py"
+        repo_dir = Path(__file__).resolve().parent
+        af3_script = repo_dir / "eval" / "af3_init.py"
+        output_dir = str(Path(output_dir).resolve())
+        json_path = str(Path(json_path).resolve())
+        dump_result = str(Path(dump_result).resolve())
+        pkl_path = str(Path(pkl_path).resolve()) if pkl_path else None
 
         if not af3_script.exists():
             raise FileNotFoundError(f"{af3_script.resolve()} does not exist!")
 
         command = [
-            "python",
+            sys.executable,
             str(af3_script),
             f"--input_json={json_path}",
             f"--ref_time_steps={ref_time_steps}",
             f"--output_base_dir={output_dir}",
             f"--cyclic={cyclic}",
             f"--num_samples={num_samples}",
-            f"--ref_pdb_path={pkl_path}",
             f"--dump_result={dump_result}"
         ]
+        if pkl_path:
+            command.append(f"--ref_pdb_path={pkl_path}")
 
         print("Running command:", " ".join(command))
 
         result = subprocess.run(
             command,
+            cwd=repo_dir,
             text=True,
             capture_output=True,
             timeout=3600
