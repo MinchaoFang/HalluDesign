@@ -130,6 +130,7 @@ Notes:
 - `--random_init_chain_spec` is mutually exclusive with `--input_file` and `--pdb_list`.
 - Only protein-chain length changes are supported. For Protenix templates, the target `proteinChain` block must have `count: 1`; split multi-count blocks into separate entries before using chain-specific random lengths.
 - `--random_init_chain_spec "A:20"` fixes chain A to length 20. `--random_init_chain_spec "A:20-40"` samples one length from 20 to 40 for each design.
+- Multiple chains may use different initial lengths, for example `--random_init_chain_spec "A:200,B:120"`. Each specified chain must be a separate protein entry (`count: 1` for Protenix; one chain ID per AF3 protein entry).
 - If `--design_epoch_begin 0`, self-consistency evaluation starts in cycle 1 after the initial random structure has been generated.
 - HalluDesign skips optimization in the last recycle by design. For no-PDB random-init runs, use at least `--num_recycles 2` if you want coordinate-guided refinement after the initial pure prediction.
 

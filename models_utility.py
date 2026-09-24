@@ -9,7 +9,73 @@ from data.utility import *
 import json
 import re
 import pickle
+import numpy as np
+import string
 from local_scripts.input_pkl_preprocess import process_single_file
+
+
+def _read_pdb_ca_coordinates(pdb_path):
+    """Return ordered C-alpha coordinates for each PDB chain."""
+    chains = {}
+    seen = set()
+    with open(pdb_path) as handle:
+        for line in handle:
+            if not line.startswith("ATOM") or line[12:16].strip() != "CA":
+                continue
+            chain_id = line[21].strip()
+            residue_id = (line[22:26].strip(), line[26].strip())
+            key = (chain_id, residue_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            try:
+                coordinate = [
+                    float(line[30:38]), float(line[38:46]), float(line[46:54])
+                ]
+            except ValueError:
+                continue
+            chains.setdefault(chain_id, []).append(coordinate)
+    return {chain: np.asarray(coords, dtype=np.float32)
+            for chain, coords in chains.items()}
+
+
+def _protenix_protein_entity_chains(chain_types):
+    """Map one-based Protenix entity indices to PDB protein chain IDs."""
+    entity_chains = {}
+    protein_index = 0
+    for entity_index, chain_type in enumerate(chain_types, start=1):
+        if chain_type == "protein":
+            entity_chains[entity_index] = string.ascii_uppercase[protein_index]
+            protein_index += 1
+    return entity_chains
+
+
+def _update_protenix_contact_positions(input_json, pdb_path, chain_types):
+    """Move binder contact anchors to the closest residues in the current PDB."""
+    if not os.path.isfile(pdb_path):
+        return
+    job = input_json[0]
+    contacts = job.get("constraint", {}).get("contact", [])
+    if not contacts:
+        return
+
+    coordinates = _read_pdb_ca_coordinates(pdb_path)
+    entity_chains = _protenix_protein_entity_chains(chain_types)
+    for contact in contacts:
+        binder_chain = entity_chains.get(contact.get("entity1"))
+        target_chain = entity_chains.get(contact.get("entity2"))
+        target_position = int(contact.get("position2", 0)) - 1
+        if not binder_chain or not target_chain:
+            continue
+        binder_coordinates = coordinates.get(binder_chain)
+        target_coordinates = coordinates.get(target_chain)
+        if (binder_coordinates is None or target_coordinates is None or
+                not 0 <= target_position < len(target_coordinates)):
+            continue
+        distances = np.linalg.norm(
+            binder_coordinates - target_coordinates[target_position], axis=1
+        )
+        contact["position1"] = int(np.argmin(distances)) + 1
 
 
 def _build_af3_random_init_json(template_path, json_path, tag, random_init_sequences,
@@ -475,6 +541,7 @@ try:
                       chain_number_list_cdr,
                       cyclic,
                       random_init,
+                      interaction_optimization=False,
                       run_af3: bool = True,
                       random_init_sequences=None,
                       random_init_file_tag=None) -> Dict:
@@ -593,7 +660,7 @@ try:
             tag = f"{pdb_file}_recycle_{cycle+1}"
             json_path = os.path.join(target_dir, metrics[0]['file_name']+".json")
             copied_file = metrics[0]["packed_path"] 
-            input_json = template.copy()
+            input_json = copy.deepcopy(template)
             print("no protenix evaluation")
             if Designer_model:
                 print("Designer_model is ProtenixInferrer.")
@@ -631,6 +698,11 @@ try:
                         rna_count +=1
                     count += 1
                 count_tuple = [count,protein_count,sm_count,rna_count,dna_count]
+
+                if interaction_optimization:
+                    _update_protenix_contact_positions(
+                        input_json, copied_file, chain_types
+                    )
 
                 with open(json_path, 'w') as f:
                     json.dump(input_json, f, indent=2)
@@ -724,6 +796,7 @@ try:
         ptm,
         random_init,
         enzyme_design,
+        interaction_optimization=False,
         run_af3: bool = True,
         random_init_sequences=None,
         random_init_file_tag=None) -> Dict:
@@ -846,7 +919,7 @@ try:
                 tag = f"{pdb_file}_recycle_{cycle+1}"
                 json_path = os.path.join(target_dir, metrics[0]['file_name']+".json")
                 copied_file = metrics[0]["packed_path"] 
-                input_json = template.copy()
+                input_json = copy.deepcopy(template)
             
                 print("Designer_model is ProtenixInferrer.")
                 # Prepare to run Protenix
@@ -892,6 +965,11 @@ try:
                         rna_count +=1
                     count += 1
                 count_tuple = [count,protein_count,sm_count,rna_count,dna_count]
+
+                if interaction_optimization:
+                    _update_protenix_contact_positions(
+                        input_json, copied_file, chain_types
+                    )
 
                 with open(json_path, 'w') as f:
                     json.dump(input_json, f, indent=2)

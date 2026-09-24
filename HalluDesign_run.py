@@ -105,12 +105,18 @@ def parse_arguments():
                     help="for pure noise generation")
     parser.add_argument("--random_init_chain_spec", type=str, default="",
                     help='No-PDB random-init protein chain length spec, e.g. "A:20" or "A:20-40"')
+    parser.add_argument("--final_plddt_threshold", type=float, default=None,
+                    help="Require final-cycle op_plddt to reach this value; failed random-init designs are restarted.")
+    parser.add_argument("--max_init_attempts", type=int, default=1,
+                    help="Maximum independent random-init attempts per design when --final_plddt_threshold is set; default: 1.")
     parser.add_argument("--num_designs", type=int, default=1,
                     help="number of no-PDB random-init designs to generate")
     parser.add_argument("--seed", type=int, default=123,
                     help="random seed used for no-PDB random-init sequences and lengths")
     parser.add_argument("--enzyme_design", action='store_true', default=False,
                     help="for enzyme design")
+    parser.add_argument("--interaction_optimization", action='store_true', default=False,
+                    help="Update Protenix contact anchors from the current structure")
     return parser.parse_args()
 
 
@@ -209,6 +215,27 @@ def _make_random_init_sequences(length_ranges, seed):
     return sequences
 
 
+def _metric_records(metrics):
+    if isinstance(metrics, list):
+        return [record for record in metrics if isinstance(record, dict)]
+    return [metrics] if isinstance(metrics, dict) else []
+
+
+def _annotate_final_quality(metrics, threshold):
+    """Attach a final quality decision and return (passed, op_plddt)."""
+    records = _metric_records(metrics)
+    try:
+        score = float(records[0].get("op_plddt")) if records else float("nan")
+    except (TypeError, ValueError):
+        score = float("nan")
+    passed = bool(np.isfinite(score) and score >= threshold)
+    for record in records:
+        record["final_plddt_threshold"] = threshold
+        record["final_op_plddt_pass"] = passed
+        record["final_design_status"] = "passed" if passed else "failed"
+    return passed, score
+
+
 def _fix_seq_keys(value):
     if not value:
         return set()
@@ -246,6 +273,15 @@ def main():
 
     if args.num_designs < 1:
         raise ValueError("--num_designs must be at least 1")
+    if args.max_init_attempts < 1:
+        raise ValueError("--max_init_attempts must be at least 1")
+    if args.final_plddt_threshold is not None:
+        if not 0 <= args.final_plddt_threshold <= 100:
+            raise ValueError("--final_plddt_threshold must be between 0 and 100.")
+        if not args.random_init_chain_spec:
+            raise ValueError(
+                "--final_plddt_threshold requires --random_init_chain_spec so a failed design can be reinitialized."
+            )
 
     random_init_length_ranges = None
     if args.random_init_chain_spec:
@@ -393,6 +429,7 @@ def main():
     metrics_new =  copy.deepcopy(metrics)
     all_results = []
     for job_index, pdb_file in enumerate(pdb_files):
+        init_attempt = 1
         random_init_sequences = None
         random_init_file_tag = None
         if pdb_file is None:
@@ -425,10 +462,16 @@ def main():
         if args.enzyme_design:         
             fixed_residues = parse_his_positions_from_pdb_filename(pdb_file)
             print(fixed_residues)    
-        for cycle in range(args.num_recycles):
+        cycle = 0
+        while init_attempt <= args.max_init_attempts:
             print(f"  Starting cycle {cycle+1}")
             try:
                 is_last_cycle = (cycle == args.num_recycles - 1)
+                # A final pLDDT gate needs a real final prediction.  The
+                # legacy path skips the last prediction to save compute.
+                run_final_prediction = (
+                    not is_last_cycle or args.final_plddt_threshold is not None
+                )
                 design_begin = False
                 mpnn_config_dict['num_seqs'] = 1
                 if cycle >= args.design_epoch_begin:
@@ -468,7 +511,7 @@ def main():
                     args.replace_MSA,
                     args.ptm,
                     args.enzyme_design,
-                    run_af3=not is_last_cycle,  #  AF3 not run in last cycle
+                    run_af3=run_final_prediction,
                     random_init_sequences=random_init_sequences,
                     random_init_file_tag=random_init_file_tag
                 )
@@ -500,7 +543,8 @@ def main():
                     chain_number_list_cdr=chain_number_list_cdr,
                     cyclic=args.cyclic,
                     random_init=args.random_init,
-                    run_af3=not is_last_cycle,
+                    interaction_optimization=args.interaction_optimization,
+                    run_af3=run_final_prediction,
                     random_init_sequences=random_init_sequences,
                     random_init_file_tag=random_init_file_tag
                 )
@@ -536,21 +580,76 @@ def main():
                     ptm=args.ptm,
                     random_init=args.random_init,
                     enzyme_design=args.enzyme_design,
-                    run_af3=not is_last_cycle,
+                    interaction_optimization=args.interaction_optimization,
+                    run_af3=run_final_prediction,
                     random_init_sequences=random_init_sequences,
                     random_init_file_tag=random_init_file_tag
                 )
                 all_results.append(metrics)
                 current_input = next_input  # update for next cycle
 
+                final_passed = True
+                final_score = None
+                if is_last_cycle and args.final_plddt_threshold is not None:
+                    final_passed, final_score = _annotate_final_quality(
+                        metrics, args.final_plddt_threshold
+                    )
+                    for record in _metric_records(metrics):
+                        record["init_attempt"] = init_attempt
+                elif args.final_plddt_threshold is not None:
+                    for record in _metric_records(metrics):
+                        record["init_attempt"] = init_attempt
+
                 # save every cycle data
                 with lock:
                     file_exists = os.path.exists(csv_path)
                     pd.DataFrame(metrics).to_csv(csv_path, mode='a', header=not file_exists, index=False)
                 if is_last_cycle:
-                   break 
+                    if not final_passed and init_attempt < args.max_init_attempts:
+                        print(
+                            f"  Attempt {init_attempt} failed final op_plddt "
+                            f"({final_score!r} < {args.final_plddt_threshold:.2f}); "
+                            "discarding it and restarting from a new random initialization."
+                        )
+                        init_attempt += 1
+                        random_init_file_tag = f"random_init_{job_index + 1:03d}_attempt_{init_attempt:03d}"
+                        random_init_sequences = _make_random_init_sequences(
+                            random_init_length_ranges,
+                            args.seed + job_index + (init_attempt - 1) * 1000003,
+                        )
+                        current_input = None
+                        chain_number_list_cdr = []
+                        cycle = 0
+                        continue
+                    if not final_passed:
+                        print(
+                            f"  Attempt {init_attempt} failed final op_plddt "
+                            f"({final_score!r} < {args.final_plddt_threshold:.2f}); "
+                            "maximum initialization attempts reached."
+                        )
+                    break
+                cycle += 1
             except Exception as e:
                 print(f"  Error in cycle {cycle+1}: {str(e)}")
+                if cycle == args.num_recycles - 1:
+                    if (args.final_plddt_threshold is not None and
+                            init_attempt < args.max_init_attempts):
+                        print(
+                            f"  Attempt {init_attempt} has no valid final op_plddt; "
+                            "restarting from a new random initialization."
+                        )
+                        init_attempt += 1
+                        random_init_file_tag = f"random_init_{job_index + 1:03d}_attempt_{init_attempt:03d}"
+                        random_init_sequences = _make_random_init_sequences(
+                            random_init_length_ranges,
+                            args.seed + job_index + (init_attempt - 1) * 1000003,
+                        )
+                        current_input = None
+                        chain_number_list_cdr = []
+                        cycle = 0
+                        continue
+                    break
+                cycle += 1
                 continue
     print(f"Processing completed. Results saved to {csv_path}")
 
