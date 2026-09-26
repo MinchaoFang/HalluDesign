@@ -58,6 +58,88 @@ One of `--input_file`, `--pdb_list`, or `--random_init_chain_spec` must be provi
 
 ## Notes
 
+## Cross-model Environment Setup
+
+`cross_model` runs Protenix and AF3 in one workflow. Before starting a run,
+check the CUDA and runtime environment in the same shell and after activating
+the HalluDesign environment. The following setup uses the CUDA compiler tools
+installed in the current Python environment:
+
+```bash
+export CUDA_VISIBLE_DEVICES=0
+
+CUDA_NVCC_ROOT=$(python -c "import site; print(site.getsitepackages()[0] + '/nvidia/cuda_nvcc')")
+export CUDA_HOME="$CUDA_NVCC_ROOT"
+export PATH="$CUDA_NVCC_ROOT/bin:$PATH"
+export XLA_FLAGS="--xla_gpu_cuda_data_dir=$CUDA_NVCC_ROOT"
+
+export XLA_PYTHON_CLIENT_PREALLOCATE=false
+export XLA_PYTHON_CLIENT_MEM_FRACTION=0.35
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
+export TRITON_CACHE_DIR=/tmp/fangmc_triton_esm
+mkdir -p "$TRITON_CACHE_DIR"
+```
+
+Verify the environment before running:
+
+```bash
+python - <<'PY'
+import torch
+print("torch:", torch.__version__)
+print("cuda available:", torch.cuda.is_available())
+if torch.cuda.is_available():
+    print("gpu:", torch.cuda.get_device_name(0))
+PY
+
+which nvcc
+nvcc --version
+echo "$CUDA_HOME"
+echo "$XLA_FLAGS"
+echo "$TRITON_CACHE_DIR"
+```
+
+Important points:
+
+- Protenix uses ESM by default in the current implementation. Add
+  `--protenix_use_msa` only when MSA features are required. ESM uses FP16 by
+  default to reduce GPU memory; use `--protenix_esm_fp32` only when FP32 ESM
+  features are necessary.
+- `cross_model` uses Protenix as the design model and AF3 as the other model.
+  The default mode launches the AF3 stage in a subprocess to isolate JAX and
+  PyTorch GPU memory. Use `--cross_model_in_process` only when the machine has
+  sufficient memory and the CUDA/JAX environment has been tested.
+- If `nvcc` is unavailable, load the cluster CUDA module first, then rerun the
+  `CUDA_NVCC_ROOT`, `CUDA_HOME`, `PATH`, and `XLA_FLAGS` setup. `nvcc` and
+  `ptxas` should be available before importing AF3 or Protenix.
+- `TRITON_CACHE_DIR` must be writable. Use a per-user or per-job directory to
+  avoid collisions between concurrent jobs.
+- If the run is intended to use MPNN sequence design without self-consistency,
+  set `--design_epoch_begin` to a value greater than or equal to
+  `--num_recycles`. For example, `--design_epoch_begin 22 --num_recycles 20`
+  still uses `--num_seqs` for MPNN design but does not load or run the AF3
+  self-consistency model.
+
+Example cross-model command after the checks above:
+
+```bash
+python ./HalluDesign_run.py \
+  --HalluDesign_model cross_model \
+  --template_path examples/monomer/template_und_protenix.json \
+  --extra_json_path examples/monomer/template_und.json \
+  --output_dir examples/monomer/HalluDesign_cross_model \
+  --pdb_list examples/monomer/pdblist \
+  --mpnn protein_mpnn \
+  --num_seqs 4 \
+  --num_recycles 10 \
+  --design_epoch_begin 0 \
+  --ref_time_steps 150
+```
+
+Use absolute paths when launching from a different working directory. The
+template passed through `--template_path` is the Protenix design input, while
+`--extra_json_path` is the AF3 input used by the cross-model stage.
+
 The following plots may help you better understand and use HalluDesign.
 
 ### Ref Time Steps

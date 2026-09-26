@@ -1,4 +1,13 @@
 import os
+
+# DeepSpeed registers its Triton autotune exit callback during import.  Set a
+# valid cache path before importing any Protenix/DeepSpeed modules.
+_triton_cache_dir = os.environ.get("TRITON_CACHE_DIR") or os.path.join(
+    "/tmp", f"halludesign_triton_{os.getuid()}"
+)
+os.environ["TRITON_CACHE_DIR"] = os.path.abspath(_triton_cache_dir)
+os.makedirs(os.environ["TRITON_CACHE_DIR"], exist_ok=True)
+
 from data.op_utility import read_protein_info_from_copied_file, filter_protein_info,residue_to_str,cdr_process,find_all_sequence_residues_in_pdb, random_protein_sequence
 from eval.evaluation import run_mpnn_evaluation, self_consistency_af3 ,process_confidence_metrics_af3,process_confidence_metrics_protenix,self_consistency_protenix,read_pdb_to_atom_array,extract_coordinates
 import copy
@@ -11,6 +20,7 @@ import re
 import pickle
 import numpy as np
 import string
+import time
 from local_scripts.input_pkl_preprocess import process_single_file
 
 
@@ -200,6 +210,90 @@ def _make_protenix_random_init_pdb(Designer_model, target_dir, template_path,
     return pdb_path
 
 
+def _run_self_consistency(
+    model_name, model, scaffold_path, output_dir, template_path,
+    sm, ccd_codes, dna, rna, chain_types, pocket_res, fixed_chains,
+    fixed_residues_for_MPNN, cyclic, replace_MSA, metrics, random_init=False,
+):
+    """Run self-consistency with the explicitly selected model backend."""
+    if model is None:
+        raise RuntimeError(
+            f"Self-consistency model '{model_name}' was not initialized."
+        )
+    start = time.perf_counter()
+    try:
+        if model_name == "af3":
+            return self_consistency_af3(
+                scaffold_path, model, output_dir, template_path, sm, ccd_codes,
+                dna, rna, chain_types, pocket_res, fixed_chains,
+                fixed_residues_for_MPNN, cyclic, replace_MSA, metrics,
+            )
+        return self_consistency_protenix(
+            scaffold_path=scaffold_path,
+            AF3Designer_model=model,
+            output_dir=output_dir,
+            template_path=template_path,
+            sm=sm,
+            dna=dna,
+            rna=rna,
+            chain_types=chain_types,
+            pocket_res=pocket_res,
+            fixed_chains=fixed_chains,
+            fixed_residues_for_MPNN=fixed_residues_for_MPNN,
+            cyclic=cyclic,
+            metrics=metrics,
+            random_init=random_init,
+        )
+    finally:
+        _record_runtime(
+            metrics, "runtime_self_consistency_sec", time.perf_counter() - start,
+            f"{model_name} self-consistency",
+        )
+
+
+def _set_metric_status(metrics, key, value):
+    """Update the first metric row without assuming metrics is a dict."""
+    if isinstance(metrics, list):
+        if metrics:
+            metrics[0][key] = value
+    elif isinstance(metrics, dict):
+        metrics[key] = value
+
+
+def _record_runtime(metrics, key, elapsed, label=None):
+    """Accumulate a stage runtime on every metric row and print it."""
+    elapsed = float(elapsed)
+    rows = metrics if isinstance(metrics, list) else [metrics]
+    for row in rows:
+        if isinstance(row, dict):
+            previous = row.get(key)
+            if previous is None or not np.isfinite(previous):
+                previous = 0.0
+            row[key] = float(previous) + elapsed
+    if label:
+        print(f"[runtime] {label}: {elapsed:.2f} s")
+
+
+def _timed_method(model, method_name, metrics, key, label, *args, **kwargs):
+    start = time.perf_counter()
+    try:
+        return getattr(model, method_name)(*args, **kwargs)
+    finally:
+        elapsed = time.perf_counter() - start
+        _record_runtime(metrics, key, elapsed, label)
+        if key in {"runtime_af3_sec", "runtime_protenix_sec"}:
+            _record_runtime(metrics, "runtime_design_sec", elapsed)
+
+
+def _timed_mpnn(*args, **kwargs):
+    metrics = args[7] if len(args) > 7 else kwargs.get("metrics")
+    start = time.perf_counter()
+    try:
+        return run_mpnn_evaluation(*args, **kwargs)
+    finally:
+        _record_runtime(metrics, "runtime_mpnn_sec", time.perf_counter() - start, "MPNN")
+
+
 def af3_op_af3_eval(pdb_file: str, 
                       cycle: int,
                       output_dir: str,
@@ -232,7 +326,10 @@ def af3_op_af3_eval(pdb_file: str,
                       enzyme_design,
                       run_af3: bool = True,
                       random_init_sequences=None,
-                      random_init_file_tag=None) -> Dict:
+                      random_init_file_tag=None,
+                      self_consistency_model="af3",
+                      SelfConsistency_model=None,
+                      run_self_consistency=None) -> Dict:
     """single pdb single cycle"""
     
     try:
@@ -306,7 +403,7 @@ def af3_op_af3_eval(pdb_file: str,
         mpnn_dir=copied_file.replace(".pdb","_mpnn_eval")
 
 
-        metrics = run_mpnn_evaluation(copied_file,
+        metrics = _timed_mpnn(copied_file,
                                       mpnn_model,
                                     mpnn_config_dict,
                                     fixed_residues_for_MPNN,
@@ -319,30 +416,21 @@ def af3_op_af3_eval(pdb_file: str,
                                     evaluator,
                                     bais_per_residues)
         print(f"design begin {design_begin}")       
-        if design_begin:
-            print("af3 evaluation")
-            AF3_sm_dir=copied_file.replace(".pdb","af3_eval")
+        if run_self_consistency is None:
+            run_self_consistency = design_begin
+        if run_self_consistency:
+            print(f"{self_consistency_model} self-consistency evaluation")
+            AF3_sm_dir=copied_file.replace(".pdb", f"{self_consistency_model}_eval")
             os.makedirs(AF3_sm_dir, exist_ok=True)
             if template_for_eval:
                 template_path_for_eval = template_for_eval
             else:
                 template_path_for_eval = template_path
-            metrics=self_consistency_af3(
-                copied_file,
-                AF3Designer_model,
-                AF3_sm_dir,
-                template_path_for_eval,
-                sm,
-                ccd,
-                dna,
-                rna,
-                chain_types,
-                pocket_res,
-                fixed_chains,
-                fixed_residues_for_MPNN,
-                cyclic,
-                replace_MSA,
-                metrics
+            metrics = _run_self_consistency(
+                self_consistency_model, SelfConsistency_model, copied_file,
+                AF3_sm_dir, template_path_for_eval, sm, ccd, dna, rna,
+                chain_types, pocket_res, fixed_chains,
+                fixed_residues_for_MPNN, cyclic, replace_MSA, metrics,
             )
         else:
             print("no af3 prediction")
@@ -455,7 +543,8 @@ def af3_op_af3_eval(pdb_file: str,
         print(json_path,  target_dir, pkl_path, ref_time_steps)
         if ref_time_steps == 200:
             print("pure prediction")
-            results_op= AF3Designer_model.single_file_process(json_path=json_path,
+            results_op= _timed_method(AF3Designer_model, "single_file_process", metrics,
+                                      "runtime_af3_sec", "AF3 design", json_path=json_path,
                                               out_dir=target_dir,
                                             ref_pdb_path=None,
                                             ref_time_steps =200,
@@ -463,14 +552,16 @@ def af3_op_af3_eval(pdb_file: str,
                                             num_samples=5)
         elif cycle == 0 and random_init and random_init_sequences is None:
             print("pure prediction")
-            results_op= AF3Designer_model.single_file_process(json_path=json_path,
+            results_op= _timed_method(AF3Designer_model, "single_file_process", metrics,
+                                      "runtime_af3_sec", "AF3 design", json_path=json_path,
                                               out_dir=target_dir,
                                             ref_pdb_path=None,
                                             ref_time_steps =200,
                                             cyclic=cyclic,
                                             num_samples=5)
         else:
-            results_op= AF3Designer_model.single_file_process(json_path=json_path,
+            results_op= _timed_method(AF3Designer_model, "single_file_process", metrics,
+                                      "runtime_af3_sec", "AF3 design", json_path=json_path,
                                               out_dir=target_dir,
                                             ref_pdb_path=pkl_path,
                                             ref_time_steps =ref_time_steps,
@@ -500,7 +591,7 @@ def af3_op_af3_eval(pdb_file: str,
                 return metrics, copied_file,chain_number_list_cdr
         else:
             print(f"AF3 failed, keep old file to go on")
-            metrics['HalluDesign_Status'] = 'Failed'
+            _set_metric_status(metrics, 'HalluDesign_Status', 'Failed')
             return metrics, copied_file,chain_number_list_cdr
             
     except Exception as e:
@@ -544,7 +635,11 @@ try:
                       interaction_optimization=False,
                       run_af3: bool = True,
                       random_init_sequences=None,
-                      random_init_file_tag=None) -> Dict:
+                      random_init_file_tag=None,
+                      self_consistency_model="af3",
+                      SelfConsistency_model=None,
+                      ccd=None,
+                      run_self_consistency=None) -> Dict:
         """Process a single PDB file in one iteration"""
 
         try:
@@ -610,7 +705,7 @@ try:
 
             metrics["fixed_residues_for_MPNN_len"] = len(fixed_residues_for_MPNN) 
             mpnn_dir=copied_file.replace(".pdb","_mpnn_eval")
-            metrics = run_mpnn_evaluation(copied_file,
+            metrics = _timed_mpnn(copied_file,
                                           mpnn_model,
                                         mpnn_config_dict,
                                         fixed_residues_for_MPNN,
@@ -623,29 +718,21 @@ try:
                                         evaluator,
                                         bais_per_residues)
             print(f"design begin {design_begin}")       
-            if design_begin:
-                print("protenix evaluation")
-                Eval_protenix_dir=copied_file.replace(".pdb","protenix_eval")
+            if run_self_consistency is None:
+                run_self_consistency = design_begin
+            if run_self_consistency:
+                print(f"{self_consistency_model} self-consistency evaluation")
+                Eval_protenix_dir=copied_file.replace(".pdb", f"{self_consistency_model}_eval")
                 os.makedirs(Eval_protenix_dir, exist_ok=True)
                 if template_for_eval:
                     template_path_for_eval = template_for_eval
                 else:
                     template_path_for_eval = template_path
-                metrics = self_consistency_protenix(
-                    scaffold_path=copied_file,
-                    AF3Designer_model=Designer_model,
-                    output_dir=Eval_protenix_dir,
-                    template_path=template_path_for_eval,
-                    sm=sm,
-                    dna=dna,
-                    rna=rna,
-                    chain_types=chain_types,
-                    pocket_res=pocket_res,
-                    fixed_chains=fixed_chains,
-                    fixed_residues_for_MPNN=fixed_residues_for_MPNN,
-                    cyclic=cyclic,
-                    metrics=metrics,
-                    random_init=random_init
+                metrics = _run_self_consistency(
+                    self_consistency_model, SelfConsistency_model, copied_file,
+                    Eval_protenix_dir, template_path_for_eval, sm, ccd, dna, rna,
+                    chain_types, pocket_res, fixed_chains,
+                    fixed_residues_for_MPNN, cyclic, False, metrics, random_init,
                 )
 
             else:
@@ -715,21 +802,24 @@ try:
 
                 torch.save(pred_coordinates_tensor,pkl_path)
                 if cycle == 0 and random_init and random_init_sequences is None:
-                    results_op=Designer_model.predict(
+                    results_op=_timed_method(Designer_model, "predict", metrics,
+                                              "runtime_protenix_sec", "Protenix design",
                     input_json_path=json_path,
                     dump_dir=target_dir,
                     seed=123
                     )
                 elif ref_time_steps == 200:
                     print("pure prediction")
-                    results_op=Designer_model.predict(
+                    results_op=_timed_method(Designer_model, "predict", metrics,
+                                              "runtime_protenix_sec", "Protenix design",
                     input_json_path=json_path,
                     dump_dir=target_dir,
                     seed=123
                     )
                 else:
                     print(json_path, pkl_path)
-                    results_op=Designer_model.predict(
+                    results_op=_timed_method(Designer_model, "predict", metrics,
+                                              "runtime_protenix_sec", "Protenix design",
                     input_json_path=json_path,
                     dump_dir=target_dir,
                     seed=123,
@@ -759,7 +849,7 @@ try:
 
                 else:
                     print("Protenix processing failed; continuing with the original file")
-                    metrics['Protenix_Status'] = 'Failed'
+                    _set_metric_status(metrics, 'Protenix_Status', 'Failed')
                     return metrics, copied_file,chain_number_list_cdr
 
         except Exception as e:
@@ -797,9 +887,15 @@ try:
         random_init,
         enzyme_design,
         interaction_optimization=False,
+        AF3_Designer_model=None,
+        cross_model_in_process=False,
         run_af3: bool = True,
         random_init_sequences=None,
-        random_init_file_tag=None) -> Dict:
+        random_init_file_tag=None,
+        self_consistency_model="af3",
+        SelfConsistency_model=None,
+        ccd=None,
+        run_self_consistency=None) -> Dict:
         """Process a single PDB file in one iteration"""
 
         try:
@@ -868,7 +964,7 @@ try:
 
             metrics["fixed_residues_for_MPNN_len"] = len(fixed_residues_for_MPNN) 
             mpnn_dir=copied_file.replace(".pdb","_mpnn_eval")
-            metrics = run_mpnn_evaluation(copied_file,
+            metrics = _timed_mpnn(copied_file,
                                           mpnn_model,
                                         mpnn_config_dict,
                                         fixed_residues_for_MPNN,
@@ -881,29 +977,21 @@ try:
                                         evaluator,
                                         bais_per_residues)
             print(f"design begin {design_begin}")       
-            if design_begin:
-                print("protenix evaluation")
-                Eval_protenix_dir=copied_file.replace(".pdb","protenix_eval")
+            if run_self_consistency is None:
+                run_self_consistency = design_begin
+            if run_self_consistency:
+                print(f"{self_consistency_model} self-consistency evaluation")
+                Eval_protenix_dir=copied_file.replace(".pdb", f"{self_consistency_model}_eval")
                 os.makedirs(Eval_protenix_dir, exist_ok=True)
                 if template_for_eval:
                     template_path_for_eval = template_for_eval
                 else:
                     template_path_for_eval = template_path
-                metrics = self_consistency_protenix(
-                    scaffold_path=copied_file,
-                    AF3Designer_model=Designer_model,
-                    output_dir=Eval_protenix_dir,
-                    template_path=template_path_for_eval,
-                    sm=sm,
-                    dna=dna,
-                    rna=rna,
-                    chain_types=chain_types,
-                    pocket_res=pocket_res,
-                    fixed_chains=fixed_chains,
-                    fixed_residues_for_MPNN=fixed_residues_for_MPNN,
-                    cyclic=cyclic,
-                    metrics=metrics,
-                    random_init=random_init
+                metrics = _run_self_consistency(
+                    self_consistency_model, SelfConsistency_model, copied_file,
+                    Eval_protenix_dir, template_path_for_eval, sm, ccd, dna, rna,
+                    chain_types, pocket_res, fixed_chains,
+                    fixed_residues_for_MPNN, cyclic, False, metrics, random_init,
                 )
 
             else:
@@ -982,21 +1070,24 @@ try:
 
                 torch.save(pred_coordinates_tensor,pkl_path)
                 if cycle == 0 and random_init and random_init_sequences is None:
-                    results_op=Designer_model.predict(
+                    results_op=_timed_method(Designer_model, "predict", metrics,
+                                              "runtime_protenix_sec", "Protenix design",
                     input_json_path=json_path,
                     dump_dir=target_dir,
                     seed=123
                     )
                 elif ref_time_steps == 200:
                     print("pure prediction")
-                    results_op=Designer_model.predict(
+                    results_op=_timed_method(Designer_model, "predict", metrics,
+                                              "runtime_protenix_sec", "Protenix design",
                     input_json_path=json_path,
                     dump_dir=target_dir,
                     seed=123
                     )
                 else:
                     print(json_path, pkl_path)
-                    results_op=Designer_model.predict(
+                    results_op=_timed_method(Designer_model, "predict", metrics,
+                                              "runtime_protenix_sec", "Protenix design",
                     input_json_path=json_path,
                     dump_dir=target_dir,
                     seed=123,
@@ -1025,7 +1116,7 @@ try:
                         return metrics, copied_file,chain_number_list_cdr
                 else:
                     print("Protenix processing failed; continuing with the original file")
-                    metrics['op_Status'] = 'Failed'
+                    _set_metric_status(metrics, 'op_Status', 'Failed')
                     return metrics, copied_file,chain_number_list_cdr
             else:
                 print("using subprocess AF3 to optmize")
@@ -1092,37 +1183,49 @@ try:
         
                 result, file_name, error = process_single_file(( copied_file, target_dir, target_dir),insert)
         
-                # run AF3
+                # Run AF3 through the legacy subprocess wrapper by default.
+                # The optional in-process path reuses the runner initialized
+                # once by HalluDesign_run.py.
                 pkl_path = os.path.join(target_dir, f'{os.path.splitext(copied_file)[0]}.pkl')
                 clear_gpu_memory()
                 print(json_path,  target_dir, pkl_path, ref_time_steps)
                 dump_result = pkl_path.replace(".pkl", "_ref_eval_result.pkl")
-                if ref_time_steps == 200:
-                    print("pure prediction")
-                    run_AF3_evaluation_with_ref_eval(target_dir,
-                                                    json_path,
-                                                    None, 
-                                                    dump_result, 
-                                                    ref_time_steps, 5,
-                                                    cyclic, )
-                elif cycle == 0 and random_init and random_init_sequences is None:
-                    print("pure prediction")
-                    run_AF3_evaluation_with_ref_eval(target_dir,
-                                                    json_path,
-                                                    None, 
-                                                    dump_result, 
-                                                    ref_time_steps, 5,
-                                                    cyclic, )
+                use_ref = not (
+                    ref_time_steps == 200 or
+                    (cycle == 0 and random_init and random_init_sequences is None)
+                )
+                if cross_model_in_process:
+                    if AF3_Designer_model is None:
+                        raise RuntimeError(
+                            "cross_model_in_process requires an initialized AF3 runner"
+                        )
+                    print("Running AF3 in the current process")
+                    results_op = AF3_Designer_model.single_file_process(
+                        json_path=json_path,
+                        out_dir=target_dir,
+                        ref_pdb_path=pkl_path if use_ref else None,
+                        ref_time_steps=ref_time_steps,
+                        cyclic=cyclic,
+                        num_samples=5,
+                    )
+                    with open(dump_result, "wb") as handle:
+                        pickle.dump(results_op, handle, protocol=pickle.HIGHEST_PROTOCOL)
                 else:
-                    run_AF3_evaluation_with_ref_eval(target_dir,
-                                                    json_path,
-                                                    pkl_path, 
-                                                    dump_result, 
-                                                    ref_time_steps, 5,
-                                                    cyclic, )
-                
-                with open(dump_result, "rb") as f:
-                    results_op = pickle.load(f)
+                    if not use_ref:
+                        print("pure prediction")
+                        run_AF3_evaluation_with_ref_eval(
+                            target_dir, json_path, None, dump_result,
+                            ref_time_steps, 5, cyclic,
+                        )
+                    else:
+                        run_AF3_evaluation_with_ref_eval(
+                            target_dir, json_path, pkl_path, dump_result,
+                            ref_time_steps, 5, cyclic,
+                        )
+
+                if not cross_model_in_process:
+                    with open(dump_result, "rb") as f:
+                        results_op = pickle.load(f)
 
                 if results_op:
                     
@@ -1148,7 +1251,7 @@ try:
                         return metrics, copied_file,chain_number_list_cdr
                 else:
                     print(f"AF3 failed, keep old file to go on")
-                    metrics['HalluDesign_Status'] = 'Failed'
+                    _set_metric_status(metrics, 'HalluDesign_Status', 'Failed')
                     return metrics, copied_file,chain_number_list_cdr
 
         except Exception as e:

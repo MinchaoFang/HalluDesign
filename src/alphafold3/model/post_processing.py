@@ -108,13 +108,13 @@ def write_output(
   with open(os.path.join(output_dir, f'{prefix}model.cif'), 'wb') as f:
     f.write(processed_result.cif)
 
-  with open(
-      os.path.join(output_dir, f'{prefix}summary_confidences.json'), 'wb'
-  ) as f:
-    f.write(processed_result.structure_confidence_summary_json)
-#
-  with open(os.path.join(output_dir, f'{prefix}confidences.json'), 'wb') as f:
-    f.write(processed_result.structure_full_data_json)
+  #with open(
+  #    os.path.join(output_dir, f'{prefix}summary_confidences.json'), 'wb'
+  #) as f:
+  #  f.write(processed_result.structure_confidence_summary_json)
+##
+  #with open(os.path.join(output_dir, f'{prefix}confidences.json'), 'wb') as f:
+  #  f.write(processed_result.structure_full_data_json)
 
   #if terms_of_use is not None:
   #  with open(os.path.join(output_dir, 'TERMS_OF_USE.md'), 'wt') as f:

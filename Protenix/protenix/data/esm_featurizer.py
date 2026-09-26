@@ -1,5 +1,6 @@
 import os
 import traceback
+import gc
 
 import pandas as pd
 import torch
@@ -93,7 +94,9 @@ class ESMFeaturizer:
                     centre_atom_array.res_id[entity_mask] - 1
                 )  # res_id starts with 1
                 # Get esm embeddding according to residue indices
-                x[entity_mask] = x_esm[res_index]
+                # ESM may run in FP16 to reduce GPU memory, while the feature
+                # tensor is intentionally kept in the model's default dtype.
+                x[entity_mask] = x_esm[res_index].to(dtype=x.dtype, device=x.device)
             except Exception as e:
                 error_message = f"{e}:\n{traceback.format_exc()}"
                 error_sequences.append(
@@ -102,9 +105,10 @@ class ESMFeaturizer:
                         "error": error_message,
                     }
                 )
-                logger.warning(
-                    f"[{bioassembly_dict['pdb_id']}] ESM error: {error_message}"
+                sample_id = bioassembly_dict.get(
+                    "pdb_id", bioassembly_dict.get("name", "unknown")
                 )
+                logger.warning(f"[{sample_id}] ESM error: {error_message}")
 
         id_key = "name" if inference_mode else "pdb_id"
         self.save_error(error_sequences, pdb_id=bioassembly_dict[id_key])
@@ -141,30 +145,38 @@ class ESMFeaturizer:
 
         model, alphabet = load_esm_model(model_name)
         error_parts = []
-        part_counts = dict(df_seq["part_id"].value_counts())
-        for part_id, count in part_counts.items():
-            df_part = df_seq[df_seq["part_id"] == part_id]
-            print(f"Part {part_id}: {len(df_part)} sequences.")
-            labels = df_part["seq_label"].tolist()
-            sequences = df_part["seq"].tolist()
-            try:
-                save_dir = os.path.join(embedding_dir, part_id)
-                if not os.path.exists(save_dir):
-                    os.makedirs(save_dir)
-                lm_embeddings = compute_ESM_embeddings(
-                    model_name,
-                    model,
-                    alphabet,
-                    labels,
-                    sequences,
-                    save_dir,
-                    truncation_seq_length=4094,
-                    toks_per_batch=16384,
-                )
-                print(
-                    f"[{part_id}] Processed {len(lm_embeddings)} sequences in total. Done!"
-                )
-            except Exception as e:
-                print(f"[{part_id}] {e}")
-                error_parts.append(part_id)
+        try:
+            part_counts = dict(df_seq["part_id"].value_counts())
+            for part_id, count in part_counts.items():
+                df_part = df_seq[df_seq["part_id"] == part_id]
+                print(f"Part {part_id}: {len(df_part)} sequences.")
+                labels = df_part["seq_label"].tolist()
+                sequences = df_part["seq"].tolist()
+                try:
+                    save_dir = os.path.join(embedding_dir, part_id)
+                    if not os.path.exists(save_dir):
+                        os.makedirs(save_dir)
+                    lm_embeddings = compute_ESM_embeddings(
+                        model_name,
+                        model,
+                        alphabet,
+                        labels,
+                        sequences,
+                        save_dir,
+                        truncation_seq_length=4094,
+                        toks_per_batch=16384,
+                    )
+                    print(
+                        f"[{part_id}] Processed {len(lm_embeddings)} sequences in total. Done!"
+                    )
+                except Exception as e:
+                    print(f"[{part_id}] {e}")
+                    error_parts.append(part_id)
+        finally:
+            # ESM is only needed for feature extraction; do not keep it beside
+            # the Protenix and AF3 models during the diffusion inference.
+            del model, alphabet
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
         print("Error parts: ", error_parts)

@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import time
+import time
 import traceback
 import warnings
 from typing import Any, Mapping
@@ -96,12 +97,14 @@ class InferenceDataset(Dataset):
         if use_esm:
             os.makedirs(cfg_esm.embedding_dir, exist_ok=True)
             os.makedirs(os.path.dirname(cfg_esm.sequence_fpath), exist_ok=True)
+            esm_start = time.perf_counter()
             ESMFeaturizer.precompute_esm_embedding(
                 self.inputs,
                 cfg_esm.model_name,
                 cfg_esm.embedding_dir,
                 cfg_esm.sequence_fpath,
             )
+            logger.info("[runtime] ESM embedding precompute: %.2f s", time.perf_counter() - esm_start)
             self.esm_featurizer = ESMFeaturizer(
                 embedding_dir=cfg_esm.embedding_dir,
                 sequence_fpath=cfg_esm.sequence_fpath,

@@ -38,6 +38,22 @@ def generate_metrics(num_protein,num_small_molecular, num_dna, num_rna,chain_typ
         'eval_ipae': np.nan,
         'eval_ipde': np.nan,
         "CoDP_score": np.nan,
+        "eval_global_protein_rmsd": np.nan,
+        "eval_fit_rmsd": np.nan,
+        "eval_binder_rmsd": np.nan,
+        "op_global_protein_rmsd": np.nan,
+        "op_fit_rmsd": np.nan,
+        "op_binder_rmsd": np.nan,
+        "origin_global_protein_rmsd": np.nan,
+        "origin_fit_rmsd": np.nan,
+        "origin_binder_rmsd": np.nan,
+        # Runtime accounting (seconds) for comparing in-process and subprocess runs.
+        "runtime_cycle_sec": np.nan,
+        "runtime_mpnn_sec": np.nan,
+        "runtime_self_consistency_sec": np.nan,
+        "runtime_design_sec": np.nan,
+        "runtime_af3_sec": np.nan,
+        "runtime_protenix_sec": np.nan,
     }
     
     num_chains = num_protein + num_small_molecular + num_dna + num_rna

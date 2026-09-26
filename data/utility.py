@@ -366,7 +366,7 @@ def calculate_multi_ligand_rmsd(cif_ligands, pdb_ligands):
     
     # Find ligands with matching residue IDs
 
-    common_keys = set(cif_ligands.keys()) & set(pdb_ligands.keys())
+    common_keys = sorted(set(cif_ligands.keys()) & set(pdb_ligands.keys()))
     if not common_keys:
         raise ValueError("No common keys found between cif_ligands and pdb_ligands. maybe you need to reindex atoms")
     for key in common_keys:
@@ -613,93 +613,71 @@ def remove_inter_chain_connections(structure):
     return structure
 
 def calculate_ca_rmsd(cif_file, pdb_file,fixed_chains=None):
-    protein_rmsd = 100.0
-    binder_rmsd = 100.0
-    ligand_rmsd = 100.0
+    """Align ``pdb_file`` onto ``cif_file`` and calculate structure RMSDs.
 
-    dna_rmsd = 100.0
-
-    rna_rmsd = 100.0
-
-    atom_centre_distance = 100.0
+    RMSD is reported after a single Kabsch fit.  When ``fixed_chains`` is
+    supplied, only those chains define the fit; the remaining chains are the
+    binder/free-part measurements.  Per-chain values are returned explicitly
+    so callers do not confuse an aggregate binder RMSD with a chain RMSD.
+    """
+    nan = float("nan")
+    dna_rmsd = nan
+    rna_rmsd = nan
     ligand_results = None
+    protein_rmsd_by_chain = {}
+    all_protein_rmsd = nan
+    binder_rmsd = nan
+    fit_rmsd = nan
     try:
-        # Parse file
         cif_parser = MMCIFParser(QUIET=True)
         cif_structure = cif_parser.get_structure("CIF", cif_file)
-        #cif_structure = remove_inter_chain_connections(cif_structure)
-        
         pdb_parser = PDBParser(QUIET=True)
         pdb_structure = pdb_parser.get_structure("PDB", pdb_file)
-        #pdb_structure = remove_inter_chain_connections(pdb_structure)
-        # get Cα atom
+        cif_ca_dict = get_ca_dict(cif_structure)
+        pdb_ca_dict = get_ca_dict(pdb_structure)
+        common_keys = sorted(set(cif_ca_dict) & set(pdb_ca_dict))
+        if not common_keys:
+            raise ValueError("CIF and PDB files have no common C-alpha atoms")
+
+        fit_keys = common_keys
         if fixed_chains:
-            cif_ca_dict_fix = get_ca_dict(cif_structure,fixed_chains)
-            pdb_ca_dict_fix = get_ca_dict(pdb_structure,fixed_chains)
-            # Find common (chain ID, residue number)
-            common_keys = set(cif_ca_dict_fix.keys()) & set(pdb_ca_dict_fix.keys())
-            if not common_keys:
-                raise ValueError("CIF and PDB files have no common Ca atoms for RMSD calculation")
-            sorted_keys = sorted(common_keys)  # Sort by chain ID and residue number
-            cif_ca = [cif_ca_dict_fix[key] for key in sorted_keys]
-            pdb_ca = [pdb_ca_dict_fix[key] for key in sorted_keys]
-    
-            # Extract coordinates and align
-            super_imposer = Superimposer()
-            super_imposer.set_atoms(cif_ca, pdb_ca) 
-            super_imposer.apply(pdb_structure.get_atoms())  # Modify PDB structure coordinates
-    
-            protein_rmsd = super_imposer.rms
+            requested = set(fixed_chains)
+            fit_keys = [key for key in common_keys if key[0] in requested]
+            if not fit_keys:
+                raise ValueError(f"No common C-alpha atoms found for fixed chains {fixed_chains}")
 
-            cif_ca_dict_all = get_ca_dict(cif_structure)
-            pdb_ca_dict_all = get_ca_dict(pdb_structure)
+        super_imposer = Superimposer()
+        super_imposer.set_atoms(
+            [cif_ca_dict[key] for key in fit_keys],
+            [pdb_ca_dict[key] for key in fit_keys],
+        )
+        super_imposer.apply(pdb_structure.get_atoms())
 
-            # Find common (chain ID, residue number)
-            common_keys_all = (set(cif_ca_dict_all.keys()) & set(pdb_ca_dict_all.keys()))-common_keys
-            sorted_keys_all = sorted(common_keys_all)  # Sort by chain ID and residue number
+        def rmsd_for_keys(keys):
+            if not keys:
+                return nan
+            ref = np.asarray([cif_ca_dict[key].get_coord() for key in keys])
+            model = np.asarray([pdb_ca_dict[key].get_coord() for key in keys])
+            return float(np.sqrt(np.mean(np.sum((ref - model) ** 2, axis=1))))
 
-            cif_ca_all = [cif_ca_dict_all[key] for key in sorted_keys_all]
-            pdb_ca_all = [pdb_ca_dict_all[key] for key in sorted_keys_all]
-            ref_coords = np.array([atom.get_coord() for atom in cif_ca_all])
-            model_coords = np.array([atom.get_coord() for atom in pdb_ca_all])
-            binder_rmsd = np.sqrt(np.mean(np.sum((ref_coords - model_coords) ** 2, axis=1)))
-            #super_imposer_all = Superimposer()
-            #super_imposer_all.set_atoms(cif_ca_all, pdb_ca_all) 
-            #binder_rmsd = super_imposer_all.rms
-        
-        else:
-            cif_ca_dict_all = get_ca_dict(cif_structure)
-            pdb_ca_dict_all = get_ca_dict(pdb_structure)
+        protein_rmsd_by_chain = {}
+        for chain_id in sorted({key[0] for key in common_keys}):
+            chain_keys = [key for key in common_keys if key[0] == chain_id]
+            protein_rmsd_by_chain[chain_id] = rmsd_for_keys(chain_keys)
 
-            # Find common (chain ID, residue number)
-            common_keys = set(cif_ca_dict_all.keys()) & set(pdb_ca_dict_all.keys())
-            if not common_keys:
-                raise ValueError("CIF and PDB files have no common Ca atoms for RMSD calculation")
-            sorted_keys = sorted(common_keys) 
-            cif_ca = [cif_ca_dict_all[key] for key in sorted_keys]
-            pdb_ca = [pdb_ca_dict_all[key] for key in sorted_keys]
+        all_protein_rmsd = rmsd_for_keys(common_keys)
+        fit_rmsd = rmsd_for_keys(fit_keys)
+        free_keys = [key for key in common_keys if key not in set(fit_keys)]
+        binder_rmsd = rmsd_for_keys(free_keys) if free_keys else all_protein_rmsd
 
-            # Extract coordinates and align
-            super_imposer = Superimposer()
-            super_imposer.set_atoms(cif_ca, pdb_ca) 
-            super_imposer.apply(pdb_structure.get_atoms())  # Modify PDB structure coordinates
-
-            protein_rmsd = super_imposer.rms
-            binder_rmsd = super_imposer.rms
-        
-        # Process ligand
+        # Ligand coordinates are now transformed by the protein fit.
         cif_ligands = get_ligands(cif_structure)
         pdb_ligands = get_ligands(pdb_structure)
         
         if cif_ligands and pdb_ligands:
-            if len(cif_ligands) != len(pdb_ligands):
-                print(len(cif_ligands) , len(pdb_ligands))
-                print("Small molecule atom counts mismatch, skipping small molecule RMSD calculation")
-
             ligand_results = calculate_multi_ligand_rmsd(cif_ligands, pdb_ligands)
             
         else:
-            print("no ligand atom")
             ligand_results = None
         cif_dna = get_nucleic_acids(cif_structure, 'DNA')
         pdb_dna = get_nucleic_acids(pdb_structure, 'DNA')
@@ -721,7 +699,11 @@ def calculate_ca_rmsd(cif_file, pdb_file,fixed_chains=None):
         print(f"Error during RMSD calculation: {e}")
     if ligand_results:
         return {
-            'protein_rmsd': [binder_rmsd,protein_rmsd],
+            'protein_rmsd': [binder_rmsd, fit_rmsd],  # legacy aggregate fields
+            'protein_rmsd_by_chain': protein_rmsd_by_chain,
+            'global_protein_rmsd': all_protein_rmsd,
+            'fit_rmsd': fit_rmsd,
+            'binder_rmsd': binder_rmsd,
             'ligand_rmsd': ligand_results['ligand_rmsd_list'],
             'ligand_count': len(ligand_results['ligand_rmsd_list']),
             'atom_distances': ligand_results['atom_distances'],
@@ -730,10 +712,14 @@ def calculate_ca_rmsd(cif_file, pdb_file,fixed_chains=None):
         }
     else:
         return {
-            'protein_rmsd': [binder_rmsd,protein_rmsd],
-            'ligand_rmsd': 100,
-            'ligand_count': 1,
-            'atom_distances': 100,
+            'protein_rmsd': [binder_rmsd, fit_rmsd],  # legacy aggregate fields
+            'protein_rmsd_by_chain': protein_rmsd_by_chain,
+            'global_protein_rmsd': all_protein_rmsd,
+            'fit_rmsd': fit_rmsd,
+            'binder_rmsd': binder_rmsd,
+            'ligand_rmsd': [],
+            'ligand_count': 0,
+            'atom_distances': [],
             'dna_rmsd': dna_rmsd,
             'rna_rmsd': rna_rmsd
         }
@@ -743,6 +729,12 @@ def clear_gpu_memory():
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
         torch.cuda.synchronize()
+        torch.cuda.ipc_collect()
+    try:
+        import jax
+        jax.clear_caches()
+    except Exception:
+        pass
     gc.collect()
     
 def read_file(path: pathlib.Path, json_path: Optional[pathlib.Path]) -> str:

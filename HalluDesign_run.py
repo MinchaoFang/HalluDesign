@@ -21,6 +21,8 @@ import os
 import copy
 import shutil
 import random
+import time
+import atexit
 from data.utility import *
 from eval.evaluation import  CoDP
 from eval.eval_utility import generate_metrics
@@ -36,6 +38,21 @@ import os
 from filelock import FileLock
 import string
 from models_utility import *
+from models_utility import _record_runtime
+
+
+def _ensure_triton_cache_at_exit():
+    """Keep DeepSpeed's late Triton autotune callback from seeing a null path."""
+    cache_dir = os.environ.get("TRITON_CACHE_DIR") or os.path.join(
+        "/tmp", f"halludesign_triton_{os.getuid()}"
+    )
+    os.environ["TRITON_CACHE_DIR"] = os.path.abspath(cache_dir)
+    os.makedirs(os.environ["TRITON_CACHE_DIR"], exist_ok=True)
+
+
+# Registered after Protenix/DeepSpeed imports in normal execution; atexit runs
+# this before their callback and therefore restores a valid cache path.
+atexit.register(_ensure_triton_cache_at_exit)
 
 PROTEIN_ALPHABET = "ACDEFGHIKLMNPQRSTVWY"
 
@@ -67,6 +84,8 @@ def parse_arguments():
                        help='Path to AF3 template.json file, it should be really careful to treat with')
     parser.add_argument('--template_for_eval', type=str, required=False, 
                        help='Path to AF3 template.json file only for eval')
+    parser.add_argument('--self_consistency_template_path', type=str, required=False,
+                       help='Template JSON for the selected self-consistency model')
     parser.add_argument('--extra_json_path', type=str, required=False, 
                        help='Path to AF3 template.json file only for cross model')       
     parser.add_argument('--HalluDesign_model', type=str,  required=True,
@@ -117,6 +136,22 @@ def parse_arguments():
                     help="for enzyme design")
     parser.add_argument("--interaction_optimization", action='store_true', default=False,
                     help="Update Protenix contact anchors from the current structure")
+    protenix_feature_group = parser.add_mutually_exclusive_group()
+    protenix_feature_group.add_argument(
+        "--protenix_use_esm", dest="protenix_use_esm", action="store_true",
+        help="Use the ESM-2 3B feature model in Protenix (default)"
+    )
+    protenix_feature_group.add_argument(
+        "--protenix_use_msa", dest="protenix_use_esm", action="store_false",
+        help="Use MSA features instead of ESM in Protenix"
+    )
+    parser.set_defaults(protenix_use_esm=True)
+    parser.add_argument("--protenix_esm_fp32", action='store_true', default=False,
+                    help="Keep Protenix ESM-2 in FP32; default uses GPU FP16 to reduce peak memory")
+    parser.add_argument("--cross_model_in_process", action='store_true', default=False,
+                    help="Reuse an in-process AF3 runner for cross_model; default uses subprocess")
+    parser.add_argument("--self_consistency_model", choices=("af3", "protenix"),
+                    default="af3", help="Model used for self-consistency evaluation")
     return parser.parse_args()
 
 
@@ -250,6 +285,10 @@ def main():
     args.template_path = os.path.abspath(os.path.expanduser(args.template_path))
     if args.template_for_eval:
         args.template_for_eval = os.path.abspath(os.path.expanduser(args.template_for_eval))
+    if args.self_consistency_template_path:
+        args.self_consistency_template_path = os.path.abspath(
+            os.path.expanduser(args.self_consistency_template_path)
+        )
     if args.extra_json_path:
         args.extra_json_path = os.path.abspath(os.path.expanduser(args.extra_json_path))
     if args.fix_seq_file:
@@ -386,28 +425,48 @@ def main():
     else:
         fixed_chains = []
 
+    # Self-consistency is only reached for cycles at or after design_epoch_begin.
+    # Avoid loading an unused self-consistency model/template for runs whose
+    # design loop ends before that cycle.
+    self_consistency_needed = args.design_epoch_begin < args.num_recycles
+
+    Designer_model = None
+    AF3_model = None
+    Protenix_model = None
+    AF3_cross_model = None
     if args.HalluDesign_model  == "af3":
         from af3_model import AF3DesignerPack
-        Designer_model = AF3DesignerPack(jax_compilation_dir=os.path.join(args.output_dir,"jax_compilation_cache_dir"))
+        AF3_model = AF3DesignerPack(jax_compilation_dir=os.path.join(args.output_dir,"jax_compilation_cache_dir"))
+        Designer_model = AF3_model
         if args.template_for_eval is not None:
             template_path_for_eval = args.template_for_eval
         else:
             template_path_for_eval = args.template_path
         protein_chains, ligand_chains, dna_chains, rna_chains, chain_types =  count_chain_based_on_json_af3(template_path_for_eval)
         metrics = generate_metrics(protein_chains,ligand_chains, dna_chains, rna_chains,chain_types)
-    if args.HalluDesign_model  == "protenix" or args.HalluDesign_model == "cross_model":
+    if (
+        args.HalluDesign_model in ("protenix", "cross_model")
+        or (args.self_consistency_model == "protenix" and self_consistency_needed)
+    ):
         #sys.path.insert(0,os.path.join(current_dir,"Protenix"))
-        from runner.inference import ProtenixInferrer
         os.environ["LAYERNORM_TYPE"] = "fast_layernorm"
         os.environ["USE_DEEPSPEED_EVO_ATTENTION"] = "true"
         script_dir = os.path.dirname(os.path.abspath(__file__))
         os.environ["CUTLASS_PATH"] = os.path.join(script_dir, "cutlass")
+        triton_cache_dir = os.environ.get("TRITON_CACHE_DIR") or os.path.join(
+            args.output_dir, "triton_cache"
+        )
+        os.environ["TRITON_CACHE_DIR"] = os.path.abspath(triton_cache_dir)
+        os.makedirs(os.environ["TRITON_CACHE_DIR"], exist_ok=True)
+        if args.protenix_use_esm:
+            os.environ["PROTENIX_ESM_HALF"] = "0" if args.protenix_esm_fp32 else "1"
+        from runner.inference import ProtenixInferrer
         static_configs = {
         "model.N_cycle": 10,
         "sample_diffusion.N_sample": 5,
         "sample_diffusion.N_step": 200, # Example value
-        "use_esm": True,
-        "use_msa": False,
+        "use_esm": args.protenix_use_esm,
+        "use_msa": not args.protenix_use_esm,
         "need_atom_confidence": True, 
         "sorted_by_ranking_score": True,
         # Add any other global or model-specific configs here
@@ -418,10 +477,50 @@ def main():
             }
 
         print("Initializing ProtenixInferrer...")
-        Designer_model = ProtenixInferrer(cyclic = args.cyclic,**static_configs)
+        Protenix_model = ProtenixInferrer(cyclic = args.cyclic,**static_configs)
         print("ProtenixInferrer initialized.")
-        protein_chains, ligand_chains, dna_chains, rna_chains, chain_types =  count_chain_based_on_json_protenix(args.template_path)
-        metrics = generate_metrics(protein_chains,ligand_chains, dna_chains, rna_chains,chain_types)
+        if args.HalluDesign_model in ("protenix", "cross_model"):
+            Designer_model = Protenix_model
+        if args.HalluDesign_model in ("protenix", "cross_model"):
+            protein_chains, ligand_chains, dna_chains, rna_chains, chain_types = count_chain_based_on_json_protenix(args.template_path)
+            metrics = generate_metrics(protein_chains, ligand_chains, dna_chains, rna_chains, chain_types)
+
+    if self_consistency_needed and args.self_consistency_model == "af3" and AF3_model is None:
+        from af3_model import AF3DesignerPack
+        print("Initializing AF3 self-consistency model...")
+        AF3_model = AF3DesignerPack(
+            jax_compilation_dir=os.path.join(args.output_dir, "self_consistency_af3_jax_cache")
+        )
+    if args.HalluDesign_model == "cross_model" and args.cross_model_in_process:
+        if AF3_model is None:
+            from af3_model import AF3DesignerPack
+            print("Initializing in-process AF3 runner for cross_model...")
+            AF3_model = AF3DesignerPack(
+                jax_compilation_dir=os.path.join(
+                    args.output_dir, "cross_model_af3_jax_compilation_cache_dir"
+                )
+            )
+            print("In-process AF3 runner initialized.")
+        AF3_cross_model = AF3_model
+
+    SelfConsistency_model = (
+        AF3_model if args.self_consistency_model == "af3" else Protenix_model
+    )
+    self_consistency_template_path = None
+    if self_consistency_needed:
+        self_consistency_template_path = args.self_consistency_template_path
+        if self_consistency_template_path is None:
+            if args.self_consistency_model == "af3" and args.HalluDesign_model == "cross_model":
+                self_consistency_template_path = args.extra_json_path
+            elif args.self_consistency_model == args.HalluDesign_model:
+                self_consistency_template_path = args.template_path
+            elif args.template_for_eval:
+                self_consistency_template_path = args.template_for_eval
+        if self_consistency_template_path is None:
+            raise ValueError(
+                f"--self_consistency_template_path is required when self-consistency "
+                f"model '{args.self_consistency_model}' differs from the design model."
+            )
     # use lock file to process 
     csv_path = os.path.join(args.output_dir, 'processing_results.csv')
     lock_path = f"{csv_path}.lock" 
@@ -465,6 +564,7 @@ def main():
         cycle = 0
         while init_attempt <= args.max_init_attempts:
             print(f"  Starting cycle {cycle+1}")
+            cycle_start = time.perf_counter()
             try:
                 is_last_cycle = (cycle == args.num_recycles - 1)
                 # A final pLDDT gate needs a real final prediction.  The
@@ -474,10 +574,16 @@ def main():
                 )
                 design_begin = False
                 mpnn_config_dict['num_seqs'] = 1
-                if cycle >= args.design_epoch_begin:
+                if cycle >= args.design_epoch_begin or not self_consistency_needed:
                     mpnn_config_dict['num_seqs'] = args.num_seqs
                     design_begin = True
-                print(f"begin multi-batch evaluation {design_begin}")
+                run_self_consistency = (
+                    self_consistency_needed and cycle >= args.design_epoch_begin
+                )
+                print(
+                    f"MPNN sequence designs: {mpnn_config_dict['num_seqs']}; "
+                    f"self-consistency: {run_self_consistency}"
+                )
                 metrics = copy.deepcopy(metrics_new)
                 if args.HalluDesign_model  == "af3":
                     metrics, next_input ,chain_number_list_cdr= af3_op_af3_eval(
@@ -485,7 +591,7 @@ def main():
                     cycle,
                     args.output_dir,
                     args.template_path,
-                    args.template_for_eval,
+                    self_consistency_template_path,
                     mpnn_model,
                     mpnn_config_dict,
                     Designer_model,
@@ -513,7 +619,10 @@ def main():
                     args.enzyme_design,
                     run_af3=run_final_prediction,
                     random_init_sequences=random_init_sequences,
-                    random_init_file_tag=random_init_file_tag
+                    random_init_file_tag=random_init_file_tag,
+                    self_consistency_model=args.self_consistency_model,
+                    SelfConsistency_model=SelfConsistency_model,
+                    run_self_consistency=run_self_consistency,
                 )
                 elif args.HalluDesign_model  == "protenix":
                     metrics, next_input, chain_number_list_cdr = protenix_op_protenix_eval(
@@ -521,7 +630,7 @@ def main():
                     cycle=cycle,
                     output_dir=args.output_dir,
                     template_path=args.template_path,
-                    template_for_eval=args.template_for_eval,
+                    template_for_eval=self_consistency_template_path,
                     mpnn_model=mpnn_model,
                     mpnn_config_dict=mpnn_config_dict,
                     Designer_model=Designer_model,
@@ -546,7 +655,11 @@ def main():
                     interaction_optimization=args.interaction_optimization,
                     run_af3=run_final_prediction,
                     random_init_sequences=random_init_sequences,
-                    random_init_file_tag=random_init_file_tag
+                    random_init_file_tag=random_init_file_tag,
+                    self_consistency_model=args.self_consistency_model,
+                    SelfConsistency_model=SelfConsistency_model,
+                    ccd=args.ccd,
+                    run_self_consistency=run_self_consistency,
                 )
                 elif args.HalluDesign_model  == "cross_model":
                     metrics, next_input, chain_number_list_cdr = cross_model_op_protenix_eval(
@@ -554,11 +667,13 @@ def main():
                     cycle=cycle,
                     output_dir=args.output_dir,
                     template_path=args.template_path,
-                    template_for_eval=args.template_for_eval,
+                    template_for_eval=self_consistency_template_path,
                     extra_json_path=args.extra_json_path,
                     mpnn_model=mpnn_model,
                     mpnn_config_dict=mpnn_config_dict,
                     Designer_model=Designer_model,
+                    AF3_Designer_model=AF3_cross_model,
+                    cross_model_in_process=args.cross_model_in_process,
                     ref_time_steps=args.ref_time_steps,
                     chain_types=chain_types,
                     fixed_chains=fixed_chains,
@@ -583,7 +698,15 @@ def main():
                     interaction_optimization=args.interaction_optimization,
                     run_af3=run_final_prediction,
                     random_init_sequences=random_init_sequences,
-                    random_init_file_tag=random_init_file_tag
+                    random_init_file_tag=random_init_file_tag,
+                    self_consistency_model=args.self_consistency_model,
+                    SelfConsistency_model=SelfConsistency_model,
+                    ccd=args.ccd,
+                    run_self_consistency=run_self_consistency,
+                )
+                _record_runtime(
+                    metrics, "runtime_cycle_sec", time.perf_counter() - cycle_start,
+                    f"cycle {cycle + 1} total",
                 )
                 all_results.append(metrics)
                 current_input = next_input  # update for next cycle

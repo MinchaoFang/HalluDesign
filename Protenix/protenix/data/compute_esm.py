@@ -42,6 +42,9 @@ def load_esm_model(model_name, local_esm_dir="esm_cache/ckpts"):
         model, alphabet = _load_esm2_model(local_model_path)
     model.eval()
     if torch.cuda.is_available():
+        # Convert on CPU first to avoid the temporary FP32+FP16 GPU peak.
+        if os.environ.get("PROTENIX_ESM_HALF", "0") == "1":
+            model = model.half()
         model = model.cuda()
 
     return model, alphabet

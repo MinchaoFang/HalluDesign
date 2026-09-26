@@ -16,6 +16,41 @@ import pandas as pd
 import torch
 import numpy as np
 import pickle
+
+
+def _copy_metric_template(source_metrics, target_metrics):
+    """Preserve the selected design row when confidence metrics are rebuilt."""
+    if isinstance(source_metrics, list) and source_metrics:
+        source_metrics = source_metrics[0]
+    if not isinstance(source_metrics, dict):
+        return target_metrics
+    target_metrics.update(copy.deepcopy(source_metrics))
+    return target_metrics
+
+
+def _protein_rmsd_for_chain(rmsd_result, chain_id):
+    """Read the explicit per-chain RMSD, with legacy fallback."""
+    by_chain = rmsd_result.get("protein_rmsd_by_chain", {})
+    if chain_id in by_chain:
+        return by_chain[chain_id]
+    values = rmsd_result.get("protein_rmsd", [])
+    return values[0] if values else np.nan
+
+
+def _ligand_rmsd_for_index(rmsd_result, index):
+    values = rmsd_result.get("ligand_rmsd", [])
+    return values[index] if index < len(values) else np.nan
+
+
+def _atom_distance_for_index(rmsd_result, index):
+    values = rmsd_result.get("atom_distances", [])
+    return values[index] if index < len(values) else np.nan
+
+
+def _set_rmsd_summary(metrics, result, prefix):
+    metrics[f"{prefix}_global_protein_rmsd"] = result.get("global_protein_rmsd", np.nan)
+    metrics[f"{prefix}_fit_rmsd"] = result.get("fit_rmsd", np.nan)
+    metrics[f"{prefix}_binder_rmsd"] = result.get("binder_rmsd", np.nan)
 try:
     import biotite.structure.io as strucio
     from biotite.structure import AtomArray
@@ -269,6 +304,7 @@ def self_consistency_protenix(scaffold_path,
         try:
             rmsd_result = calculate_ca_rmsd(cif_path, scaffold_path,fixed_chains)
             print(rmsd_result)
+            _set_rmsd_summary(metric, rmsd_result, "eval")
             _count =0
             _sm_count = 0
             #print(rmsd_result)
@@ -276,12 +312,12 @@ def self_consistency_protenix(scaffold_path,
                 label = chain_labels[_count]
                 if chain == "protein":
                     if fixed_chains:
-                        metric[f'eval_protein_{label}_rmsd'] = rmsd_result['protein_rmsd'][_count]
+                        metric[f'eval_protein_{label}_rmsd'] = _protein_rmsd_for_chain(rmsd_result, label)
                     else:
-                        metric[f'eval_protein_{label}_rmsd'] = rmsd_result['protein_rmsd'][0]
+                        metric[f'eval_protein_{label}_rmsd'] = _protein_rmsd_for_chain(rmsd_result, label)
                 if chain == 'ligand':
-                    metric[f'eval_ligand_{label}_rmsd'] = rmsd_result['ligand_rmsd'][_sm_count]
-                    metric[f'eval_atom_distances_{label}'] = rmsd_result['atom_distances'][_sm_count]
+                    metric[f'eval_ligand_{label}_rmsd'] = _ligand_rmsd_for_index(rmsd_result, _sm_count)
+                    metric[f'eval_atom_distances_{label}'] = _atom_distance_for_index(rmsd_result, _sm_count)
                     _sm_count += 1
                 if chain == 'dna':
                     metric[f'eval_dna_{label}_rmsd'] = rmsd_result['dna_rmsd']
@@ -502,6 +538,7 @@ def self_consistency_af3(scaffold_path,
         else:
             try:
                 rmsd_result = calculate_ca_rmsd(cif_path, scaffold_path,fixed_chains)
+                _set_rmsd_summary(metric, rmsd_result, "eval")
                 _count =0
                 _sm_count = 0
                 #print(rmsd_result)
@@ -509,12 +546,12 @@ def self_consistency_af3(scaffold_path,
                     label = chain_labels[_count]
                     if chain == "protein":
                         if fixed_chains:
-                            metric[f'eval_protein_{label}_rmsd'] = rmsd_result['protein_rmsd'][_count]
+                            metric[f'eval_protein_{label}_rmsd'] = _protein_rmsd_for_chain(rmsd_result, label)
                         else:
-                            metric[f'eval_protein_{label}_rmsd'] = rmsd_result['protein_rmsd'][0]
+                            metric[f'eval_protein_{label}_rmsd'] = _protein_rmsd_for_chain(rmsd_result, label)
                     if chain == 'ligand':
-                        metric[f'eval_ligand_{label}_rmsd'] = rmsd_result['ligand_rmsd'][_sm_count]
-                        metric[f'eval_atom_distances_{label}'] = rmsd_result['atom_distances'][_sm_count]
+                        metric[f'eval_ligand_{label}_rmsd'] = _ligand_rmsd_for_index(rmsd_result, _sm_count)
+                        metric[f'eval_atom_distances_{label}'] = _atom_distance_for_index(rmsd_result, _sm_count)
                         _sm_count += 1
                     if chain == 'dna':
                         metric[f'eval_dna_{label}_rmsd'] = rmsd_result['dna_rmsd']
@@ -894,7 +931,7 @@ def process_confidence_metrics_protenix(results_op, cif_path: str, copied_file :
                 chain_pair_ipae[(c1, c2)] = pae[mask].mean()
                 chain_pair_ipde[(c1, c2)] = pde[mask].mean()
         #print(dict_result)
-        metrics ={}
+        metrics = _copy_metric_template(metrics_tile, {})
         metrics['op_cif_path'] = cif_path
         [count,protein_count,sm_count,rna_count,dna_count] =count_tuple 
         chain_labels = string.ascii_uppercase[:count]  # Generate labels A, B, C...
@@ -917,6 +954,8 @@ def process_confidence_metrics_protenix(results_op, cif_path: str, copied_file :
         try:
             rmsd_result = calculate_ca_rmsd(cif_path, copied_file,fixed_chains)
             rmsd_result_to_origin = calculate_ca_rmsd(cif_path, scaffold_path,fixed_chains)
+            _set_rmsd_summary(metrics, rmsd_result, "op")
+            _set_rmsd_summary(metrics, rmsd_result_to_origin, "origin")
             _count =0
             _sm_count = 0
 
@@ -924,16 +963,16 @@ def process_confidence_metrics_protenix(results_op, cif_path: str, copied_file :
                 label = chain_labels[_count]
                 if chain == "protein":
                     if fixed_chains:
-                        metrics[f'op_protein_{label}_rmsd'] = rmsd_result['protein_rmsd'][_count]
-                        metrics[f'origin_protein_{label}_rmsd'] = rmsd_result_to_origin['protein_rmsd'][_count]
+                        metrics[f'op_protein_{label}_rmsd'] = _protein_rmsd_for_chain(rmsd_result, label)
+                        metrics[f'origin_protein_{label}_rmsd'] = _protein_rmsd_for_chain(rmsd_result_to_origin, label)
                     else:
-                        metrics[f'op_protein_{label}_rmsd'] = rmsd_result['protein_rmsd'][0]
-                        metrics[f'origin_protein_{label}_rmsd'] = rmsd_result_to_origin['protein_rmsd'][0]
+                        metrics[f'op_protein_{label}_rmsd'] = _protein_rmsd_for_chain(rmsd_result, label)
+                        metrics[f'origin_protein_{label}_rmsd'] = _protein_rmsd_for_chain(rmsd_result_to_origin, label)
                 if chain == 'ligand':
-                    metrics[f'op_ligand_{label}_rmsd'] = rmsd_result['ligand_rmsd'][_sm_count]
-                    metrics[f'op_atom_distances_{label}'] = rmsd_result['atom_distances'][_sm_count]
-                    metrics[f'origin_ligand_{label}_rmsd'] = rmsd_result_to_origin['ligand_rmsd'][_sm_count]
-                    metrics[f'origin_atom_distances_{label}'] = rmsd_result_to_origin['atom_distances'][_sm_count]
+                    metrics[f'op_ligand_{label}_rmsd'] = _ligand_rmsd_for_index(rmsd_result, _sm_count)
+                    metrics[f'op_atom_distances_{label}'] = _atom_distance_for_index(rmsd_result, _sm_count)
+                    metrics[f'origin_ligand_{label}_rmsd'] = _ligand_rmsd_for_index(rmsd_result_to_origin, _sm_count)
+                    metrics[f'origin_atom_distances_{label}'] = _atom_distance_for_index(rmsd_result_to_origin, _sm_count)
                     _sm_count += 1
                 if chain == 'dna':
                     metrics[f'op_dna_{label}_rmsd'] = rmsd_result['dna_rmsd']
@@ -1043,7 +1082,7 @@ def process_confidence_metrics_af3(results_op, cif_path: str, copied_file : str,
         dict_result['ranking_confidence'] = max_ranking_result.metadata["ranking_confidence"]
 
         dict_result['chain_ptm'] = max_ranking_result.metadata["iptm_ichain"]
-        metrics ={}
+        metrics = _copy_metric_template(metrics_tile, {})
         metrics['op_cif_path'] = cif_path
         [count,protein_count,sm_count,rna_count,dna_count] =count_tuple 
         chain_labels = string.ascii_uppercase[:count]  # Generate labels A, B, C...
@@ -1064,6 +1103,8 @@ def process_confidence_metrics_af3(results_op, cif_path: str, copied_file : str,
         try:
             rmsd_result = calculate_ca_rmsd(cif_path, copied_file,fixed_chains)
             rmsd_result_to_origin = calculate_ca_rmsd(cif_path, scaffold_path,fixed_chains)
+            _set_rmsd_summary(metrics, rmsd_result, "op")
+            _set_rmsd_summary(metrics, rmsd_result_to_origin, "origin")
             _count =0
             _sm_count = 0
 
@@ -1071,16 +1112,16 @@ def process_confidence_metrics_af3(results_op, cif_path: str, copied_file : str,
                 label = chain_labels[_count]
                 if chain == "protein":
                     if fixed_chains:
-                        metrics[f'op_protein_{label}_rmsd'] = rmsd_result['protein_rmsd'][_count]
-                        metrics[f'origin_protein_{label}_rmsd'] = rmsd_result_to_origin['protein_rmsd'][_count]
+                        metrics[f'op_protein_{label}_rmsd'] = _protein_rmsd_for_chain(rmsd_result, label)
+                        metrics[f'origin_protein_{label}_rmsd'] = _protein_rmsd_for_chain(rmsd_result_to_origin, label)
                     else:
-                        metrics[f'op_protein_{label}_rmsd'] = rmsd_result['protein_rmsd'][0]
-                        metrics[f'origin_protein_{label}_rmsd'] = rmsd_result_to_origin['protein_rmsd'][0]
+                        metrics[f'op_protein_{label}_rmsd'] = _protein_rmsd_for_chain(rmsd_result, label)
+                        metrics[f'origin_protein_{label}_rmsd'] = _protein_rmsd_for_chain(rmsd_result_to_origin, label)
                 if chain == 'ligand':
-                    metrics[f'op_ligand_{label}_rmsd'] = rmsd_result['ligand_rmsd'][_sm_count]
-                    metrics[f'op_atom_distances_{label}'] = rmsd_result['atom_distances'][_sm_count]
-                    metrics[f'origin_ligand_{label}_rmsd'] = rmsd_result_to_origin['ligand_rmsd'][_sm_count]
-                    metrics[f'origin_atom_distances_{label}'] = rmsd_result_to_origin['atom_distances'][_sm_count]
+                    metrics[f'op_ligand_{label}_rmsd'] = _ligand_rmsd_for_index(rmsd_result, _sm_count)
+                    metrics[f'op_atom_distances_{label}'] = _atom_distance_for_index(rmsd_result, _sm_count)
+                    metrics[f'origin_ligand_{label}_rmsd'] = _ligand_rmsd_for_index(rmsd_result_to_origin, _sm_count)
+                    metrics[f'origin_atom_distances_{label}'] = _atom_distance_for_index(rmsd_result_to_origin, _sm_count)
                     _sm_count += 1
                 if chain == 'dna':
                     metrics[f'op_dna_{label}_rmsd'] = rmsd_result['dna_rmsd']
