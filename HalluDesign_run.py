@@ -64,6 +64,8 @@ def parse_arguments():
                        help='input file path')
     parser.add_argument('--fix_res_index', type=str, required=False, 
                         help='Fixed residue indices, e.g. A1 B4 but be careful, you should reindex all chain to begin with 1')
+    parser.add_argument('--redesign_res_index', type=str, required=False, default='',
+                        help='Residues allowed for redesign, e.g. "A15 A16 B42"; all other residues are fixed')
     parser.add_argument('--fix_chain_index', type=str, required=False,
                         help='Fixed chain indices, e.g. A B')
     parser.add_argument('--output_dir', type=str, required=True,
@@ -412,6 +414,7 @@ def main():
         fixed_residues_base = args.fix_res_index.split()
     else:
         fixed_residues_base = []
+    redesign_residues = args.redesign_res_index.split()
     evaluator = None
     if args.CoDP and args.HalluDesign_model != "af3":
         checkpoints_to_run = "./CoDP/ckpt/epoch_1_without_esm2.pth"
@@ -623,6 +626,7 @@ def main():
                     self_consistency_model=args.self_consistency_model,
                     SelfConsistency_model=SelfConsistency_model,
                     run_self_consistency=run_self_consistency,
+                    redesign_residues=redesign_residues,
                 )
                 elif args.HalluDesign_model  == "protenix":
                     metrics, next_input, chain_number_list_cdr = protenix_op_protenix_eval(
@@ -660,6 +664,7 @@ def main():
                     SelfConsistency_model=SelfConsistency_model,
                     ccd=args.ccd,
                     run_self_consistency=run_self_consistency,
+                    redesign_residues=redesign_residues,
                 )
                 elif args.HalluDesign_model  == "cross_model":
                     metrics, next_input, chain_number_list_cdr = cross_model_op_protenix_eval(
@@ -703,6 +708,7 @@ def main():
                     SelfConsistency_model=SelfConsistency_model,
                     ccd=args.ccd,
                     run_self_consistency=run_self_consistency,
+                    redesign_residues=redesign_residues,
                 )
                 _record_runtime(
                     metrics, "runtime_cycle_sec", time.perf_counter() - cycle_start,

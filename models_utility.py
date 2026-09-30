@@ -294,6 +294,35 @@ def _timed_mpnn(*args, **kwargs):
         _record_runtime(metrics, "runtime_mpnn_sec", time.perf_counter() - start, "MPNN")
 
 
+class RedesignResidueError(ValueError):
+    """Invalid residue identifier supplied to the redesign whitelist."""
+
+
+def _resolve_redesign_whitelist(protein_info, fixed_residues, redesign_residues):
+    """Convert a redesign whitelist into the fixed-residue list used by MPNN."""
+    redesign_residues = set(redesign_residues or [])
+    if not redesign_residues:
+        return fixed_residues
+    all_residues = {
+        f"{chain}{residue_to_str(res.id)}"
+        for chain, residues in protein_info.items()
+        for res in residues
+    }
+    unknown_residues = redesign_residues - all_residues
+    if unknown_residues:
+        raise RedesignResidueError(
+            "Unknown residues in --redesign_res_index: "
+            + ", ".join(sorted(unknown_residues))
+        )
+    # Explicit fixed residues take precedence over the redesign whitelist.
+    return sorted(set(fixed_residues) | (all_residues - redesign_residues))
+
+
+def _effective_redesign_residues(redesign_residues, fixed_residues):
+    """Remove explicit fixed residues before passing the MPNN redesign mask."""
+    return sorted(set(redesign_residues or []) - set(fixed_residues))
+
+
 def af3_op_af3_eval(pdb_file: str, 
                       cycle: int,
                       output_dir: str,
@@ -329,7 +358,8 @@ def af3_op_af3_eval(pdb_file: str,
                       random_init_file_tag=None,
                       self_consistency_model="af3",
                       SelfConsistency_model=None,
-                      run_self_consistency=None) -> Dict:
+                      run_self_consistency=None,
+                      redesign_residues=None) -> Dict:
     """single pdb single cycle"""
     
     try:
@@ -381,6 +411,12 @@ def af3_op_af3_eval(pdb_file: str,
             for chain, residues in filtered_info.items()
             for res in residues
         ]
+        fixed_residues_for_MPNN = _resolve_redesign_whitelist(
+            protein_info, fixed_residues_for_MPNN, redesign_residues
+        )
+        active_redesign_residues = _effective_redesign_residues(
+            redesign_residues, fixed_residues_for_MPNN
+        )
         # for symmetry chains and res design
         if symmetry_chains:
             symmetry_residues = generate_cross_chain_symmetry(protein_info, symmetry_chains)
@@ -414,7 +450,8 @@ def af3_op_af3_eval(pdb_file: str,
                                     cyclic,
                                     cycle,
                                     evaluator,
-                                    bais_per_residues)
+                                    bais_per_residues,
+                                    active_redesign_residues)
         print(f"design begin {design_begin}")       
         if run_self_consistency is None:
             run_self_consistency = design_begin
@@ -594,6 +631,8 @@ def af3_op_af3_eval(pdb_file: str,
             _set_metric_status(metrics, 'HalluDesign_Status', 'Failed')
             return metrics, copied_file,chain_number_list_cdr
             
+    except RedesignResidueError:
+        raise
     except Exception as e:
         print(f"file error: {str(e)}")
         return metrics, copied_file,chain_number_list_cdr
@@ -639,7 +678,8 @@ try:
                       self_consistency_model="af3",
                       SelfConsistency_model=None,
                       ccd=None,
-                      run_self_consistency=None) -> Dict:
+                      run_self_consistency=None,
+                      redesign_residues=None) -> Dict:
         """Process a single PDB file in one iteration"""
 
         try:
@@ -691,6 +731,12 @@ try:
                 for chain, residues in filtered_info.items()
                 for res in residues
             ]
+            fixed_residues_for_MPNN = _resolve_redesign_whitelist(
+                protein_info, fixed_residues_for_MPNN, redesign_residues
+            )
+            active_redesign_residues = _effective_redesign_residues(
+                redesign_residues, fixed_residues_for_MPNN
+            )
             # for symmetry chains and res design
             if symmetry_chains:
                 symmetry_residues = generate_cross_chain_symmetry(protein_info, symmetry_chains)
@@ -716,7 +762,8 @@ try:
                                         cyclic,
                                         cycle,
                                         evaluator,
-                                        bais_per_residues)
+                                        bais_per_residues,
+                                        active_redesign_residues)
             print(f"design begin {design_begin}")       
             if run_self_consistency is None:
                 run_self_consistency = design_begin
@@ -852,6 +899,8 @@ try:
                     _set_metric_status(metrics, 'Protenix_Status', 'Failed')
                     return metrics, copied_file,chain_number_list_cdr
 
+        except RedesignResidueError:
+            raise
         except Exception as e:
             print(f"Failed to process the file: {str(e)}")
             return metrics, copied_file,chain_number_list_cdr
@@ -895,7 +944,8 @@ try:
         self_consistency_model="af3",
         SelfConsistency_model=None,
         ccd=None,
-        run_self_consistency=None) -> Dict:
+        run_self_consistency=None,
+        redesign_residues=None) -> Dict:
         """Process a single PDB file in one iteration"""
 
         try:
@@ -947,6 +997,12 @@ try:
                 for chain, residues in filtered_info.items()
                 for res in residues
             ]
+            fixed_residues_for_MPNN = _resolve_redesign_whitelist(
+                protein_info, fixed_residues_for_MPNN, redesign_residues
+            )
+            active_redesign_residues = _effective_redesign_residues(
+                redesign_residues, fixed_residues_for_MPNN
+            )
             # for symmetry chains and res design
             if symmetry_chains:
                 symmetry_residues = generate_cross_chain_symmetry(protein_info, symmetry_chains)
@@ -975,7 +1031,8 @@ try:
                                         cyclic,
                                         cycle,
                                         evaluator,
-                                        bais_per_residues)
+                                        bais_per_residues,
+                                        active_redesign_residues)
             print(f"design begin {design_begin}")       
             if run_self_consistency is None:
                 run_self_consistency = design_begin
@@ -1254,6 +1311,8 @@ try:
                     _set_metric_status(metrics, 'HalluDesign_Status', 'Failed')
                     return metrics, copied_file,chain_number_list_cdr
 
+        except RedesignResidueError:
+            raise
         except Exception as e:
             print(f"Failed to process the file: {str(e)}")
             return metrics, copied_file,chain_number_list_cdr

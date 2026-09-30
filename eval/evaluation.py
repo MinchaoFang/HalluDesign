@@ -617,7 +617,8 @@ def run_mpnn_evaluation(scaffold_path,
                         cyclic,
                         cycle,
                         evaluator= None,
-                        bais_per_residues=None):  
+                        bais_per_residues=None,
+                        redesign_residues=None):
     #pocket_plddt_good_res = common_elements(pocket_res ,fixed_residues_for_MPNN)
     #pocket_plddt_good_res_set = set(pocket_plddt_good_res)
     pocket_res_to_fix = [item for item in fixed_residues_for_MPNN]
@@ -643,9 +644,9 @@ def run_mpnn_evaluation(scaffold_path,
 
     if mpnn_config_dict["model_name"] =="ligandmpnn_plus_proteinmpnn":
         print("ligandmpnn plus proteinmpnn evaluation")
-        sequences,packed_paths=run_Ligandmpnn_plus_proteinmpnn_evaluation(mpnn_model,scaffold_path,mpnn_config_dict,pocket_res_to_fix,non_pocket_to_fix,weights_str,output_dir,symmetry_residues)
+        sequences,packed_paths=run_Ligandmpnn_plus_proteinmpnn_evaluation(mpnn_model,scaffold_path,mpnn_config_dict,pocket_res_to_fix,non_pocket_to_fix,weights_str,output_dir,symmetry_residues,redesign_residues)
     else: 
-        sequences,packed_paths=run_purempnn_evaluation(mpnn_model,scaffold_path,mpnn_config_dict,pocket_res_to_fix,weights_str,output_dir,bias_AA,symmetry_residues,bais_per_residues)
+        sequences,packed_paths=run_purempnn_evaluation(mpnn_model,scaffold_path,mpnn_config_dict,pocket_res_to_fix,weights_str,output_dir,bias_AA,symmetry_residues,bais_per_residues,redesign_residues)
     
     # NOTE:
     # We also tested physics-based scoring models such as PLIP and PyRosetta,
@@ -814,7 +815,7 @@ def run_selection_process(sequences, packed_paths, evaluator, scaffold_path, num
 
 
 
-def run_Ligandmpnn_plus_proteinmpnn_evaluation(mpnn_model,scaffold_path,mpnn_config_dict,pocket_res_to_fix,non_pocket_to_fix,weights_str,output_dir,symmetry_residues):  
+def run_Ligandmpnn_plus_proteinmpnn_evaluation(mpnn_model,scaffold_path,mpnn_config_dict,pocket_res_to_fix,non_pocket_to_fix,weights_str,output_dir,symmetry_residues,redesign_residues=None):
     # ! to do 
     protein_mpnn , ligand_mpnn =  mpnn_model
     sequences  = []
@@ -826,7 +827,7 @@ def run_Ligandmpnn_plus_proteinmpnn_evaluation(mpnn_model,scaffold_path,mpnn_con
                                       numbers_seqs=mpnn_config_dict['num_seqs'],   
                                       chains_to_design="",
                                       fixed_res=pocket_res_to_fix, 
-                                      redesigned_residues="", 
+                                      redesigned_residues=" ".join(redesign_residues or []),
                                       symmetry_residues=symmetry_residues,
                                       weights_str=weights_str,)
     sequences,packed_paths = [],[]
@@ -836,7 +837,7 @@ def run_Ligandmpnn_plus_proteinmpnn_evaluation(mpnn_model,scaffold_path,mpnn_con
                                       numbers_seqs=1,   
                                       chains_to_design="",
                                       fixed_res=non_pocket_to_fix, 
-                                      redesigned_residues="", 
+                                      redesigned_residues=" ".join(redesign_residues or []),
                                       symmetry_residues=symmetry_residues,
                                       weights_str=weights_str,)
         sequences.append(sequences_stack_prompnn[0])
@@ -844,7 +845,7 @@ def run_Ligandmpnn_plus_proteinmpnn_evaluation(mpnn_model,scaffold_path,mpnn_con
 
     return  sequences,packed_paths
 
-def run_purempnn_evaluation(mpnn_model,scaffold_path,mpnn_config_dict,pocket_res_to_fix,weights_str,output_dir,bias_AA,symmetry_residues,bais_per_residues):  
+def run_purempnn_evaluation(mpnn_model,scaffold_path,mpnn_config_dict,pocket_res_to_fix,weights_str,output_dir,bias_AA,symmetry_residues,bais_per_residues,redesign_residues=None):
     
 
     print(f"{mpnn_config_dict['model_name']} design")
@@ -854,7 +855,7 @@ def run_purempnn_evaluation(mpnn_model,scaffold_path,mpnn_config_dict,pocket_res
                                       numbers_seqs=mpnn_config_dict['num_seqs'],   
                                       chains_to_design="",
                                       fixed_res=pocket_res_to_fix, 
-                                      redesigned_residues="", 
+                                      redesigned_residues=" ".join(redesign_residues or []),
                                       symmetry_residues=symmetry_residues,
                                       bais_per_residues = bais_per_residues,
                                       input_bias_AA = bias_AA,
