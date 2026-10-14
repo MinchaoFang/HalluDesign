@@ -60,7 +60,22 @@ def _protenix_protein_entity_chains(chain_types):
     return entity_chains
 
 
-def _update_protenix_contact_positions(input_json, pdb_path, chain_types):
+def _random_surface_anchor(pdb_path, chain_id, seed):
+    """Select a reproducible exposed CA residue using local CA density."""
+    coordinates = _read_pdb_ca_coordinates(pdb_path).get(chain_id)
+    if coordinates is None or len(coordinates) == 0:
+        return None
+    distances = np.linalg.norm(coordinates[:, None] - coordinates[None, :], axis=-1)
+    # Fewer non-local neighbours within 10 A indicates a more exposed residue.
+    sequence_separation = np.abs(np.arange(len(coordinates))[:, None] - np.arange(len(coordinates))[None, :])
+    density = np.sum((distances < 10.0) & (sequence_separation > 2), axis=1)
+    candidate_count = max(1, int(np.ceil(len(coordinates) * 0.30)))
+    candidates = np.argsort(density)[:candidate_count]
+    return int(np.random.default_rng(seed).choice(candidates)) + 1
+
+
+def _update_protenix_contact_positions(input_json, pdb_path, chain_types,
+                                       random_surface_anchor=False, seed=123):
     """Move binder contact anchors to the closest residues in the current PDB."""
     if not os.path.isfile(pdb_path):
         return
@@ -71,13 +86,18 @@ def _update_protenix_contact_positions(input_json, pdb_path, chain_types):
 
     coordinates = _read_pdb_ca_coordinates(pdb_path)
     entity_chains = _protenix_protein_entity_chains(chain_types)
-    for contact in contacts:
+    for contact_index, contact in enumerate(contacts):
         binder_chain = entity_chains.get(contact.get("entity1"))
         target_chain = entity_chains.get(contact.get("entity2"))
         target_position = int(contact.get("position2", 0)) - 1
         if not binder_chain or not target_chain:
             continue
         binder_coordinates = coordinates.get(binder_chain)
+        if random_surface_anchor:
+            anchor = _random_surface_anchor(pdb_path, binder_chain, seed + contact_index)
+            if anchor is not None:
+                contact["position1"] = anchor
+            continue
         target_coordinates = coordinates.get(target_chain)
         if (binder_coordinates is None or target_coordinates is None or
                 not 0 <= target_position < len(target_coordinates)):
@@ -359,7 +379,8 @@ def af3_op_af3_eval(pdb_file: str,
                       self_consistency_model="af3",
                       SelfConsistency_model=None,
                       run_self_consistency=None,
-                      redesign_residues=None) -> Dict:
+                      redesign_residues=None,
+                      force_reference=False) -> Dict:
     """single pdb single cycle"""
     
     try:
@@ -578,7 +599,7 @@ def af3_op_af3_eval(pdb_file: str,
         pkl_path = os.path.join(target_dir, f'{os.path.splitext(copied_file)[0]}.pkl')
         clear_gpu_memory()
         print(json_path,  target_dir, pkl_path, ref_time_steps)
-        if ref_time_steps == 200:
+        if ref_time_steps == 200 and not force_reference:
             print("pure prediction")
             results_op= _timed_method(AF3Designer_model, "single_file_process", metrics,
                                       "runtime_af3_sec", "AF3 design", json_path=json_path,
@@ -679,7 +700,10 @@ try:
                       SelfConsistency_model=None,
                       ccd=None,
                       run_self_consistency=None,
-                      redesign_residues=None) -> Dict:
+                      redesign_residues=None,
+                      force_reference=False,
+                      interaction_anchor_mode="nearest_target",
+                      interaction_seed=123) -> Dict:
         """Process a single PDB file in one iteration"""
 
         try:
@@ -835,7 +859,11 @@ try:
 
                 if interaction_optimization:
                     _update_protenix_contact_positions(
-                        input_json, copied_file, chain_types
+                        input_json, copied_file, chain_types,
+                        random_surface_anchor=(
+                            cycle == 0 and interaction_anchor_mode == "random_surface"
+                        ),
+                        seed=interaction_seed,
                     )
 
                 with open(json_path, 'w') as f:
@@ -855,7 +883,7 @@ try:
                     dump_dir=target_dir,
                     seed=123
                     )
-                elif ref_time_steps == 200:
+                elif ref_time_steps == 200 and not force_reference:
                     print("pure prediction")
                     results_op=_timed_method(Designer_model, "predict", metrics,
                                               "runtime_protenix_sec", "Protenix design",
@@ -945,7 +973,10 @@ try:
         SelfConsistency_model=None,
         ccd=None,
         run_self_consistency=None,
-        redesign_residues=None) -> Dict:
+        redesign_residues=None,
+        force_reference=False,
+        interaction_anchor_mode="nearest_target",
+        interaction_seed=123) -> Dict:
         """Process a single PDB file in one iteration"""
 
         try:
@@ -1113,7 +1144,11 @@ try:
 
                 if interaction_optimization:
                     _update_protenix_contact_positions(
-                        input_json, copied_file, chain_types
+                        input_json, copied_file, chain_types,
+                        random_surface_anchor=(
+                            cycle == 0 and interaction_anchor_mode == "random_surface"
+                        ),
+                        seed=interaction_seed,
                     )
 
                 with open(json_path, 'w') as f:
@@ -1133,7 +1168,7 @@ try:
                     dump_dir=target_dir,
                     seed=123
                     )
-                elif ref_time_steps == 200:
+                elif ref_time_steps == 200 and not force_reference:
                     print("pure prediction")
                     results_op=_timed_method(Designer_model, "predict", metrics,
                                               "runtime_protenix_sec", "Protenix design",
@@ -1248,7 +1283,7 @@ try:
                 print(json_path,  target_dir, pkl_path, ref_time_steps)
                 dump_result = pkl_path.replace(".pkl", "_ref_eval_result.pkl")
                 use_ref = not (
-                    ref_time_steps == 200 or
+                    (ref_time_steps == 200 and not force_reference) or
                     (cycle == 0 and random_init and random_init_sequences is None)
                 )
                 if cross_model_in_process:

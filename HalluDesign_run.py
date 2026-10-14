@@ -76,6 +76,8 @@ def parse_arguments():
                        help='toatl Number of recycles to perform')
     parser.add_argument('--ref_time_steps', type=int, default=50,
                        help='ref time steps to perform')
+    parser.add_argument('--first_cycle_ref_time_steps', type=int, default=None,
+                       help='Reference-guided diffusion steps for cycle 1 only. Unlike legacy --ref_time_steps 200, this keeps the input scaffold as a reference.')
     parser.add_argument('--cdr',  type=str,  required=False,
                     help='cdr input to refine antibody,should use in antibody')
     parser.add_argument('--fix_seq_file',  type=str,  required=False,
@@ -138,6 +140,11 @@ def parse_arguments():
                     help="for enzyme design")
     parser.add_argument("--interaction_optimization", action='store_true', default=False,
                     help="Update Protenix contact anchors from the current structure")
+    parser.add_argument("--interaction_anchor_mode", choices=("nearest_target", "random_surface"),
+                    default="nearest_target",
+                    help="For a binder-only first cycle, random_surface selects a reproducible exposed binder residue; later cycles use nearest_target.")
+    parser.add_argument("--interaction_seed", type=int, default=123,
+                    help="Random seed used by --interaction_anchor_mode random_surface")
     protenix_feature_group = parser.add_mutually_exclusive_group()
     protenix_feature_group.add_argument(
         "--protenix_use_esm", dest="protenix_use_esm", action="store_true",
@@ -587,6 +594,14 @@ def main():
                     f"MPNN sequence designs: {mpnn_config_dict['num_seqs']}; "
                     f"self-consistency: {run_self_consistency}"
                 )
+                cycle_ref_time_steps = (
+                    args.first_cycle_ref_time_steps
+                    if cycle == 0 and args.first_cycle_ref_time_steps is not None
+                    else args.ref_time_steps
+                )
+                first_cycle_reference_guided = (
+                    cycle == 0 and args.first_cycle_ref_time_steps is not None
+                )
                 metrics = copy.deepcopy(metrics_new)
                 if args.HalluDesign_model  == "af3":
                     metrics, next_input ,chain_number_list_cdr= af3_op_af3_eval(
@@ -598,7 +613,7 @@ def main():
                     mpnn_model,
                     mpnn_config_dict,
                     Designer_model,
-                    args.ref_time_steps,
+                    cycle_ref_time_steps,
                     chain_types,
                     fixed_chains,
                     fixed_residues,
@@ -627,6 +642,7 @@ def main():
                     SelfConsistency_model=SelfConsistency_model,
                     run_self_consistency=run_self_consistency,
                     redesign_residues=redesign_residues,
+                    force_reference=first_cycle_reference_guided,
                 )
                 elif args.HalluDesign_model  == "protenix":
                     metrics, next_input, chain_number_list_cdr = protenix_op_protenix_eval(
@@ -638,7 +654,7 @@ def main():
                     mpnn_model=mpnn_model,
                     mpnn_config_dict=mpnn_config_dict,
                     Designer_model=Designer_model,
-                    ref_time_steps=args.ref_time_steps,
+                    ref_time_steps=cycle_ref_time_steps,
                     chain_types=chain_types,
                     fixed_chains=fixed_chains,
                     fixed_residues=fixed_residues,
@@ -657,6 +673,9 @@ def main():
                     cyclic=args.cyclic,
                     random_init=args.random_init,
                     interaction_optimization=args.interaction_optimization,
+                    force_reference=first_cycle_reference_guided,
+                    interaction_anchor_mode=args.interaction_anchor_mode,
+                    interaction_seed=args.interaction_seed,
                     run_af3=run_final_prediction,
                     random_init_sequences=random_init_sequences,
                     random_init_file_tag=random_init_file_tag,
@@ -679,7 +698,7 @@ def main():
                     Designer_model=Designer_model,
                     AF3_Designer_model=AF3_cross_model,
                     cross_model_in_process=args.cross_model_in_process,
-                    ref_time_steps=args.ref_time_steps,
+                    ref_time_steps=cycle_ref_time_steps,
                     chain_types=chain_types,
                     fixed_chains=fixed_chains,
                     fixed_residues=fixed_residues,
@@ -701,6 +720,9 @@ def main():
                     random_init=args.random_init,
                     enzyme_design=args.enzyme_design,
                     interaction_optimization=args.interaction_optimization,
+                    force_reference=first_cycle_reference_guided,
+                    interaction_anchor_mode=args.interaction_anchor_mode,
+                    interaction_seed=args.interaction_seed,
                     run_af3=run_final_prediction,
                     random_init_sequences=random_init_sequences,
                     random_init_file_tag=random_init_file_tag,

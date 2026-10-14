@@ -37,6 +37,9 @@ def generate_metrics(num_protein,num_small_molecular, num_dna, num_rna,chain_typ
         'eval_pde': np.nan,
         'eval_ipae': np.nan,
         'eval_ipde': np.nan,
+        # DunbrackLab ipSAE (maximum directed chain-pair score).
+        'eval_ipSAE': np.nan,
+        'op_ipSAE': np.nan,
         "CoDP_score": np.nan,
         "eval_global_protein_rmsd": np.nan,
         "eval_fit_rmsd": np.nan,
@@ -58,6 +61,16 @@ def generate_metrics(num_protein,num_small_molecular, num_dna, num_rna,chain_typ
     
     num_chains = num_protein + num_small_molecular + num_dna + num_rna
     chain_labels = string.ascii_uppercase[:num_chains]  
+    # Initialise directed chain-pair fields so every processing_results.csv
+    # has a stable schema, including runs for which a predictor fails.
+    for i, source_label in enumerate(chain_labels):
+        for j, target_label in enumerate(chain_labels):
+            if i == j:
+                continue
+            for prefix in ("eval", "op"):
+                metrics[f'{prefix}_{source_label}_{target_label}_iptm'] = np.nan
+                metrics[f'{prefix}_{source_label}_{target_label}_pae'] = np.nan
+                metrics[f'{prefix}_{source_label}_{target_label}_ipSAE'] = np.nan
     if num_protein != 0:
         for i in range(0,num_protein):
             label = chain_labels[i]

@@ -51,6 +51,85 @@ def _set_rmsd_summary(metrics, result, prefix):
     metrics[f"{prefix}_global_protein_rmsd"] = result.get("global_protein_rmsd", np.nan)
     metrics[f"{prefix}_fit_rmsd"] = result.get("fit_rmsd", np.nan)
     metrics[f"{prefix}_binder_rmsd"] = result.get("binder_rmsd", np.nan)
+
+
+IPSAE_PAE_CUTOFF = 10.0
+
+
+def _ipsae_d0(length):
+    """DunbrackLab/IPSAE d0 term for protein residue pairs."""
+    length = max(26.0, float(length))
+    return max(1.0, 1.24 * (length - 15.0) ** (1.0 / 3.0) - 1.8)
+
+
+def _calculate_ipsae_by_pair(pae, token_chain_ids, chain_labels):
+    """Calculate DunbrackLab ipSAE from a residue-token PAE matrix.
+
+    This is the published residue-specific (d0res) definition: for every
+    aligned residue, only residues in the other chain with PAE < 10 A are
+    retained; d0 is based on their number, and the best residue score is kept.
+    Returned keys are directed chain-label pairs, e.g. ("A", "B").
+    """
+    pae = np.asarray(pae, dtype=float)
+    chain_ids = np.asarray(token_chain_ids)
+    if pae.ndim != 2 or pae.shape[0] != pae.shape[1] or len(chain_ids) != pae.shape[0]:
+        return {}
+
+    # Preserve the model token order, which is the same order used by the
+    # confidence chain-pair matrices and by HalluDesign chain labels.
+    ordered_chain_ids = []
+    for chain_id in chain_ids.tolist():
+        if chain_id not in ordered_chain_ids:
+            ordered_chain_ids.append(chain_id)
+    pair_scores = {}
+    for source_index, source_id in enumerate(ordered_chain_ids[:len(chain_labels)]):
+        source_mask = chain_ids == source_id
+        for target_index, target_id in enumerate(ordered_chain_ids[:len(chain_labels)]):
+            if source_index == target_index:
+                continue
+            target_mask = chain_ids == target_id
+            best_score = 0.0
+            for residue_index in np.flatnonzero(source_mask):
+                valid = target_mask & (pae[residue_index] < IPSAE_PAE_CUTOFF)
+                if not np.any(valid):
+                    continue
+                d0 = _ipsae_d0(np.count_nonzero(valid))
+                score = np.mean(1.0 / (1.0 + (pae[residue_index, valid] / d0) ** 2))
+                best_score = max(best_score, float(score))
+            pair_scores[(chain_labels[source_index], chain_labels[target_index])] = best_score
+    return pair_scores
+
+
+def _populate_pair_metrics(metrics, prefix, pae, token_chain_ids, chain_pair_iptm, chain_labels):
+    """Write directed iPTM, mean PAE, and ipSAE metrics for all chain pairs."""
+    pae = np.asarray(pae, dtype=float)
+    chain_ids = np.asarray(token_chain_ids)
+    ordered_chain_ids = []
+    for chain_id in chain_ids.tolist():
+        if chain_id not in ordered_chain_ids:
+            ordered_chain_ids.append(chain_id)
+    ipsae_by_pair = _calculate_ipsae_by_pair(pae, chain_ids, chain_labels)
+
+    for i, source_id in enumerate(ordered_chain_ids[:len(chain_labels)]):
+        for j, target_id in enumerate(ordered_chain_ids[:len(chain_labels)]):
+            if i == j:
+                continue
+            source_label, target_label = chain_labels[i], chain_labels[j]
+            mask = np.outer(chain_ids == source_id, chain_ids == target_id)
+            if np.any(mask):
+                metrics[f'{prefix}_{source_label}_{target_label}_pae'] = float(pae[mask].mean())
+            try:
+                value = chain_pair_iptm[i][j]
+                if value is not None:
+                    metrics[f'{prefix}_{source_label}_{target_label}_iptm'] = float(value)
+            except (IndexError, KeyError, TypeError):
+                pass
+            metrics[f'{prefix}_{source_label}_{target_label}_ipSAE'] = ipsae_by_pair.get(
+                (source_label, target_label), np.nan
+            )
+
+    if ipsae_by_pair:
+        metrics[f'{prefix}_ipSAE'] = max(ipsae_by_pair.values())
 try:
     import biotite.structure.io as strucio
     from biotite.structure import AtomArray
@@ -259,10 +338,14 @@ def self_consistency_protenix(scaffold_path,
 
         #print(max_ranking_result.metadata.keys())
 
-        dict_result ={}
-    
-        dict_result['ipae'] = None  
-        dict_result['ipde'] = None  
+        dict_result = {}
+        data = results_eval['full_data'][max_ranking]
+        pae_all = np.asarray(data['token_pair_pae'])
+        pde_all = np.asarray(data['token_pair_pde'])
+        chains = np.asarray(data['token_asym_id'])
+        interface_mask = chains[:, None] != chains[None, :]
+        dict_result['ipae'] = float(pae_all[interface_mask].mean()) if np.any(interface_mask) else np.nan
+        dict_result['ipde'] = float(pde_all[interface_mask].mean()) if np.any(interface_mask) else np.nan
 
         dict_result['iptm'] = results_eval['summary_confidence'][max_ranking]['chain_iptm']
         dict_result['chain_pair_pae_min'] = None
@@ -291,10 +374,13 @@ def self_consistency_protenix(scaffold_path,
         metric['eval_iptm'] = dict_result['iptm'].mean().item()
         metric['eval_ptm'] = dict_result['chain_ptm'].mean().item()
         
-        metric['eval_pae'] =  None
-        metric['eval_pde'] =  None
-        metric['eval_ipae'] = None
-        metric['eval_ipde'] = None
+        metric['eval_pae'] = float(pae_all.mean())
+        metric['eval_pde'] = float(pde_all.mean())
+        metric['eval_ipae'] = dict_result['ipae']
+        metric['eval_ipde'] = dict_result['ipde']
+        _populate_pair_metrics(
+            metric, "eval", pae_all, chains, chain_pair_iptm, chain_labels
+        )
         
         for i in range(0,count):
             label = chain_labels[i]
@@ -530,6 +616,9 @@ def self_consistency_af3(scaffold_path,
         metric['eval_pde'] = dict_result['pde'] 
         metric['eval_ipae'] = dict_result['ipae'] 
         metric['eval_ipde'] = dict_result['ipde'] 
+        _populate_pair_metrics(
+            metric, "eval", pae_all, chains, chain_pair_iptm, chain_labels
+        )
         
         for i in range(0,count):
             label = chain_labels[i]
@@ -945,6 +1034,9 @@ def process_confidence_metrics_protenix(results_op, cif_path: str, copied_file :
         metrics['op_pde'] = global_pde
         metrics['op_ipae'] = global_ipae
         metrics['op_ipde'] = global_ipde
+        _populate_pair_metrics(
+            metrics, "op", pae, chain_ids, chain_pair_iptm, chain_labels
+        )
         metrics['op_plddt'] = calculate_average_b_factor(cif_path,[f"{_}" for _ in chain_labels])
         
         for i in range(0,count):
@@ -1097,6 +1189,9 @@ def process_confidence_metrics_af3(results_op, cif_path: str, copied_file : str,
         metrics['op_pde'] = dict_result['pde'] 
         metrics['op_ipae'] = dict_result['ipae'] 
         metrics['op_ipde'] = dict_result['ipde'] 
+        _populate_pair_metrics(
+            metrics, "op", pae_all, chains, chain_pair_iptm, chain_labels
+        )
         for i in range(0,count):
             label = chain_labels[i]
             metrics[f'op_{label}_plddt'] = calculate_average_b_factor(cif_path,[label])
