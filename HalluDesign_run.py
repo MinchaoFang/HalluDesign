@@ -54,6 +54,35 @@ def _ensure_triton_cache_at_exit():
 # this before their callback and therefore restores a valid cache path.
 atexit.register(_ensure_triton_cache_at_exit)
 
+
+def _cleanup_concise_cycle(output_dir, cycle):
+    """Remove reproducible intermediate files after a cycle has completed.
+
+    Final model CIF/PDB files, confidence JSON files, and processing_results.csv
+    are retained. Cleanup is deliberately restricted to the current recycle
+    directory so a concise run cannot affect another experiment.
+    """
+    recycle_dir = Path(output_dir) / f"recycle_{cycle + 1}"
+    if not recycle_dir.is_dir():
+        return
+    removed = 0
+    for path in list(recycle_dir.rglob("all_samples")):
+        if path.is_dir():
+            shutil.rmtree(path, ignore_errors=True)
+            removed += 1
+    # Keep MPNN-packed PDB files: they are referenced by packed_path and are
+    # useful for post-hoc RMSD/sequence checks. Only their transient Pkl files
+    # are removed below.
+    for path in list(recycle_dir.rglob("*.pkl")):
+        if path.is_file():
+            path.unlink(missing_ok=True)
+            removed += 1
+    # Keep every JSON file. This includes the exact per-cycle input JSON and
+    # AF3 *_data.json needed to reproduce or audit the op_cif structure, as
+    # well as confidence/summary-confidence JSON files for analysis.
+    if removed:
+        print(f"Concise cleanup for recycle_{cycle + 1}: removed {removed} intermediate items")
+
 PROTEIN_ALPHABET = "ACDEFGHIKLMNPQRSTVWY"
 
 def parse_arguments():
@@ -76,6 +105,8 @@ def parse_arguments():
                        help='toatl Number of recycles to perform')
     parser.add_argument('--ref_time_steps', type=int, default=50,
                        help='ref time steps to perform')
+    parser.add_argument('--concise', action='store_true', default=False,
+                       help='After each cycle is recorded, remove all_samples and transient Pkl files; retain structures, JSON files, packed PDBs, and CSV metrics.')
     parser.add_argument('--first_cycle_ref_time_steps', type=int, default=None,
                        help='Reference-guided diffusion steps for cycle 1 only. Unlike legacy --ref_time_steps 200, this keeps the input scaffold as a reference.')
     parser.add_argument('--cdr',  type=str,  required=False,
@@ -755,6 +786,8 @@ def main():
                 with lock:
                     file_exists = os.path.exists(csv_path)
                     pd.DataFrame(metrics).to_csv(csv_path, mode='a', header=not file_exists, index=False)
+                if args.concise:
+                    _cleanup_concise_cycle(args.output_dir, cycle)
                 if is_last_cycle:
                     if not final_passed and init_attempt < args.max_init_attempts:
                         print(
